@@ -82,22 +82,31 @@ CREATE TABLE IF NOT EXISTS known_mus (
 
 -- war_mu_roles: Discord role IDs created for Dutch-owned MUs in the war guild
 --   Only used by the war_sync cog; safe to exist on the production bot (empty).
+--   role_type 'category' is a pseudo-entry (discord_role_id actually holds a
+--   CategoryChannel id, not a role id) used by war_guild_divisions.py to
+--   find a MU's Discord category by ID rather than by name — survives any
+--   future rename of either the category or the MU.
 CREATE TABLE IF NOT EXISTS war_mu_roles (
     mu_id           TEXT NOT NULL,
-    role_type       TEXT NOT NULL,  -- 'owner', 'commander', 'member'
+    role_type       TEXT NOT NULL,  -- 'owner', 'commander', 'member', 'category'
     discord_role_id TEXT NOT NULL,
     guild_id        TEXT NOT NULL,
     mu_name         TEXT,
     PRIMARY KEY (mu_id, role_type, guild_id)
 );
 
--- division_mu_overrides: runtime add/move/remove edits to DIVISION_MUS
+-- division_mu_overrides: runtime add/move/remove edits to DIVISION_MU_IDS
 --   (cogs/tasks/war_guild_divisions.py), made via /mudivisie instead of
 --   hand-editing the source file. division 0 means "removed" (excluded even
---   if the MU is still hardcoded in DIVISION_MUS). Applied on top of the
---   hardcoded dict at startup so they survive restarts.
+--   if the MU is still hardcoded in DIVISION_MU_IDS). Applied on top of the
+--   hardcoded dict at startup so they survive restarts. mu_id is the real
+--   key (a MU's name can change in-game while its ID never does); mu_name
+--   is kept for display and stays the PRIMARY KEY for historical reasons —
+--   see upsert_division_mu_override for how a rename is handled without
+--   leaving a stale duplicate row behind.
 CREATE TABLE IF NOT EXISTS division_mu_overrides (
     mu_name  TEXT PRIMARY KEY,
+    mu_id    TEXT,
     division INTEGER NOT NULL
 );
 
@@ -131,8 +140,17 @@ CREATE INDEX IF NOT EXISTS idx_citizen_levels_mu_name ON citizen_levels(mu_name)
 
 -- identity_links: mapping between Discord identities and in-game identities
 --   updated on verification approvals in welcome flow
+--   PRIMARY KEY is (discord_user_id, guild_id), NOT discord_user_id alone —
+--   the same Discord user can be verified independently in more than one
+--   guild this bot serves (e.g. the production guild and the war guild).
+--   A discord_user_id-only key meant re-verifying in a second guild
+--   silently overwrote (and orphaned) the link from the first, which is
+--   why the production guild's nickname sync had zero rows to work from
+--   despite /approve being used there for months — confirmed as a real
+--   incident. See bot.py's init_db() for the migration off the old
+--   single-column key on existing databases.
 CREATE TABLE IF NOT EXISTS identity_links (
-    discord_user_id        TEXT PRIMARY KEY,
+    discord_user_id        TEXT NOT NULL,
     guild_id               TEXT NOT NULL,
     in_game_user_id        TEXT NOT NULL,
     nationality            TEXT NOT NULL,
@@ -140,7 +158,8 @@ CREATE TABLE IF NOT EXISTS identity_links (
     embassy_country        TEXT,
     approved_by_discord_id TEXT NOT NULL,
     approved_at            TEXT NOT NULL,
-    updated_at             TEXT NOT NULL
+    updated_at             TEXT NOT NULL,
+    PRIMARY KEY (discord_user_id, guild_id)
 );
 CREATE INDEX IF NOT EXISTS idx_identity_links_ingame ON identity_links(in_game_user_id);
 
@@ -563,6 +582,9 @@ CREATE INDEX IF NOT EXISTS idx_pill_reminders_30_expires ON pill_reminders_30(ex
 --   wealth_active:             personal wallet + wealth of active companies (from userWealth ranking)
 --   wealth_inactive_companies: sum of balance of disabled/inactive companies
 --   wealth_total:              wealth_active + wealth_inactive_companies
+--   wealth_companies/items/money/equipments/weapons: the breakdown from
+--     user.getUserById's stats.wealth (added later — see cogs/tasks/wealth.py).
+--     wealth_companies + items + money + equipments + weapons == wealth_total.
 CREATE TABLE IF NOT EXISTS citizen_wealth (
     user_id                   TEXT PRIMARY KEY,
     country_id                TEXT NOT NULL,
@@ -570,6 +592,11 @@ CREATE TABLE IF NOT EXISTS citizen_wealth (
     wealth_active             REAL NOT NULL DEFAULT 0,
     wealth_inactive_companies REAL NOT NULL DEFAULT 0,
     wealth_total              REAL NOT NULL DEFAULT 0,
+    wealth_companies          REAL NOT NULL DEFAULT 0,
+    wealth_items              REAL NOT NULL DEFAULT 0,
+    wealth_money              REAL NOT NULL DEFAULT 0,
+    wealth_equipments         REAL NOT NULL DEFAULT 0,
+    wealth_weapons            REAL NOT NULL DEFAULT 0,
     updated_at                TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_citizen_wealth_country ON citizen_wealth(country_id);
@@ -578,11 +605,22 @@ CREATE INDEX IF NOT EXISTS idx_citizen_wealth_total   ON citizen_wealth(wealth_t
 -- citizen_wealth_history: daily snapshots of each NL citizen's total wealth.
 --   One row per (user_id, snapshot_date). Used to compute wealth increase
 --   over a configurable number of days in the /wealth command.
+-- wealth_companies/items/money/equipments/weapons: same breakdown as
+-- citizen_wealth above, captured daily so history can be replayed with a
+-- category excluded (e.g. "hide company wealth") instead of only ever
+-- showing the combined total. NULL (not 0) for snapshots taken before this
+-- breakdown started being tracked, so old rows can be told apart from a
+-- genuine zero.
 CREATE TABLE IF NOT EXISTS citizen_wealth_history (
     user_id       TEXT NOT NULL,
     country_id    TEXT NOT NULL,
     citizen_name  TEXT,
     wealth_total  REAL NOT NULL DEFAULT 0,
+    wealth_companies  REAL,
+    wealth_items      REAL,
+    wealth_money      REAL,
+    wealth_equipments REAL,
+    wealth_weapons    REAL,
     snapshot_date TEXT NOT NULL,  -- ISO date: YYYY-MM-DD (UTC)
     PRIMARY KEY (user_id, snapshot_date)
 );

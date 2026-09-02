@@ -389,8 +389,33 @@ class MudmgCog(CommandCogBase, name="mudmg"):
 
         table = "```\n" + "\n".join(lines) + "\n```"
 
-        # Split into multiple embeds if description exceeds 4096 chars (very unlikely)
-        _MAX_DESC = 4000
+        # \u2500\u2500 Division subtotals \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        div_weekly: dict[str, float] = {}
+        div_total: dict[str, float] = {}
+        for name, cat, weekly, total in rows:
+            div_weekly[cat] = div_weekly.get(cat, 0.0) + weekly
+            div_total[cat] = div_total.get(cat, 0.0) + total
+
+        def _div_sort_key(cat: str) -> tuple[int, str]:
+            m = re.match(r"^D(\d+)$", cat)
+            return (int(m.group(1)), "") if m else (999, cat)
+
+        div_cats = sorted(div_weekly.keys(), key=_div_sort_key)
+        div_name_w = max((len(c) for c in div_cats), default=4)
+        div_header = f"{'Divisie':<{div_name_w}}  {'Wekelijks':>{W}}  {'Totaal':>{T}}"
+        div_sep = "\u2500" * len(div_header)
+        div_lines = [div_header, div_sep]
+        for cat in div_cats:
+            icon = _CAT_ICON.get(cat, "  ")
+            dw, dt = div_weekly[cat], div_total[cat]
+            dw_str = fmt_damage(dw) if dw else "\u2014"
+            dt_str = fmt_damage(dt) if dt else "\u2014"
+            div_lines.append(f"{cat:<{div_name_w}}  {dw_str:>{W}}  {dt_str:>{T}}  {icon}")
+        div_table = "**Divisietotalen**\n```\n" + "\n".join(div_lines) + "\n```"
+
+        # Split into multiple embeds if description exceeds 4096 chars (very
+        # unlikely) \u2014 reserve room on the last chunk for div_table below it.
+        _MAX_DESC = 4000 - len(div_table)
         chunks: list[str] = []
         if len(table) <= _MAX_DESC:
             chunks = [table]
@@ -417,9 +442,12 @@ class MudmgCog(CommandCogBase, name="mudmg"):
             title = f"⚔️ Nederlandse MUs — Ranking {sort_label}"
             if len(chunks) > 1:
                 title += f" ({i + 1}/{len(chunks)})"
+            description = chunk
+            if i == len(chunks) - 1:
+                description += f"\n{div_table}"
             embed = discord.Embed(
                 title=title,
-                description=chunk,
+                description=description,
                 colour=self._embed_colour(),
             )
             if i == len(chunks) - 1:

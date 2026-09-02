@@ -1,9 +1,14 @@
-"""Background task: fetch wealth for all NL citizens and store in DB.
+"""Background task: fetch wealth for all citizens and store in DB.
 
-Runs every 24 hours.  Calls the global ``userWealth`` ranking once to get the
-active wealth for every user (personal wallet + active companies), then for
-each NL citizen also paginates ``company.getCompanies`` to find
-disabled/inactive companies and adds their balance to the total.
+Runs every 24 hours. Calls ``user.getUserById`` for every citizen we know
+about (via tRPC HTTP batching — see ``APIClient.batch_get``, ~100 citizens
+per HTTP request rather than one request each) and reads the total AND the
+per-category breakdown from each response's ``stats.wealth`` — confirmed
+live to be ``{companies, items, money, equipments, weapons, total}``, with
+the five categories always summing to ``total``. This *is* visible via our
+API keys (an earlier attempt at this looked at a top-level ``wealth`` field
+that's genuinely always null for other users — the real field lives one
+level down, under ``stats``).
 """
 
 from __future__ import annotations
@@ -26,7 +31,9 @@ _STARTUP_DELAY_S = 240  # 4 minutes
 # ── Response parsing helpers ──────────────────────────────────────────────────
 
 def _unwrap(resp: object) -> object:
-    """Strip tRPC result/data envelopes."""
+    """Strip tRPC result/data envelopes — batch_get() already does this for
+    the normal (batched) path, but its per-item fallback path may not, so
+    every response is run through this regardless of which path it took."""
     if not isinstance(resp, dict):
         return resp
     for key in ("result", "data"):
@@ -36,58 +43,19 @@ def _unwrap(resp: object) -> object:
     return resp
 
 
-def _extract_ranking_entries(resp: object) -> list[dict]:
-    """Return a flat list of ranking entries from a ranking.getRanking response."""
-    data = _unwrap(resp)
-    if isinstance(data, list):
-        return [e for e in data if isinstance(e, dict)]
-    if isinstance(data, dict):
-        for key in ("items", "ranking", "rankings", "data", "results"):
-            v = data.get(key)
-            if isinstance(v, list):
-                return [e for e in v if isinstance(e, dict)]
-    return []
-
-
-def _entry_user_id(entry: dict) -> Optional[str]:
-    """Extract the user ID from a ranking entry."""
-    user = entry.get("user")
-    if isinstance(user, str) and user:
-        return user
-    if isinstance(user, dict):
-        for key in ("_id", "id", "userId"):
-            v = user.get(key)
-            if v:
-                return str(v)
-    for key in ("userId", "citizenId", "id", "_id"):
-        v = entry.get(key)
-        if v:
-            return str(v)
-    return None
-
-
-def _entry_username(entry: dict) -> Optional[str]:
-    """Extract a human-readable username from a ranking entry."""
-    for key in ("username", "name", "citizenName"):
-        v = entry.get(key)
-        if isinstance(v, str) and v:
-            return v
-    user = entry.get("user")
-    if isinstance(user, dict):
-        for key in ("username", "name"):
-            v = user.get(key)
-            if isinstance(v, str) and v:
-                return v
-    return None
-
-
-def _entry_wealth(entry: dict) -> float:
-    """Extract the wealth value from a ranking entry."""
-    for key in ("value", "wealth", "amount", "total", "balance"):
-        v = entry.get(key)
-        if isinstance(v, (int, float)):
-            return float(v)
-    return 0.0
+def _extract_wealth(user_doc: object) -> Optional[dict]:
+    """Pull {companies, items, money, equipments, weapons, total} out of one
+    user.getUserById response — it lives at stats.wealth, NOT top-level
+    (confirmed live; a top-level "wealth" field also exists but is always
+    null for anyone other than the account's own authenticated session)."""
+    data = _unwrap(user_doc)
+    if not isinstance(data, dict):
+        return None
+    stats = data.get("stats")
+    if not isinstance(stats, dict):
+        return None
+    wealth = stats.get("wealth")
+    return wealth if isinstance(wealth, dict) else None
 
 
 # ── Task cog ──────────────────────────────────────────────────────────────────
@@ -129,56 +97,87 @@ class WealthTasks(TaskCogBase, name="wealth_tasks"):
     async def _run_wealth_refresh(self) -> dict:
         logger.info("wealth_refresh: starting")
 
-        # ── 1. Fetch global userWealth ranking ─────────────────────────
-        try:
-            resp = await self._client.post(
-                "/ranking.getRanking",
-                json={"rankingType": "userWealth"},
-            )
-        except Exception as exc:
-            logger.warning("wealth_refresh: ranking API request failed: %s", exc)
-            return {"saved": 0}
-
-        entries = _extract_ranking_entries(resp)
-        logger.info("wealth_refresh: got %d global wealth ranking entries", len(entries))
-
-        # Build lookup: user_id -> (wealth_active, username)
-        wealth_map: dict[str, tuple[float, Optional[str]]] = {}
-        for entry in entries:
-            uid = _entry_user_id(entry)
-            wealth = _entry_wealth(entry)
-            name = _entry_username(entry)
-            if uid:
-                wealth_map[uid] = (wealth, name)
-
-        # ── 2. Get ALL citizens from DB (all countries) ─────────────────
+        # ── 1. Get ALL citizens from DB (all countries) ─────────────────
         # get_all_citizens_for_tips_scan returns [(user_id, country_id, citizen_name)]
         all_citizens = await self._db.get_all_citizens_for_tips_scan()
         if not all_citizens:
             logger.warning("wealth_refresh: no citizens in DB")
             return {"saved": 0}
 
-        logger.info("wealth_refresh: processing %d citizens across all countries", len(all_citizens))
+        logger.info("wealth_refresh: fetching wealth for %d citizens across all countries", len(all_citizens))
+
+        # ── 2. user.getUserById for every citizen, tRPC-batched (~100 per
+        # HTTP request — see APIClient.batch_get) rather than one request
+        # each. A small sleep between chunks (not the default 0) since this
+        # is thousands of citizens, not the dozens batch_get is more usually
+        # called with elsewhere — 429 backoff alone would still recover, but
+        # pacing it avoids leaning on that every single day.
+        # This is a citizen-scale sweep (tens of thousands of calls, batched)
+        # just like citizen_refresh's own country sweep — serialized against
+        # it and the other heavy sweeps (luck, global_luck, ...) via the
+        # same shared lock so they don't all hammer the discord bot's small
+        # API key pool at once.
+        try:
+            async with self._heavy_api_lock:
+                raw_results = await self._client.batch_get(
+                    "/user.getUserById",
+                    [{"userId": uid} for uid, _cid, _name in all_citizens],
+                    batch_size=100,
+                    chunk_sleep=0.3,
+                )
+        except Exception as exc:
+            logger.warning("wealth_refresh: user.getUserById batch fetch failed: %s", exc)
+            return {"saved": 0}
 
         now_str = datetime.now(timezone.utc).isoformat()
         today_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-        # Process citizens concurrently in batches of 20
+        # ── 3. Write DB rows (cheap — no more API calls from here on), a
+        # bounded number concurrently so this doesn't serialize thousands
+        # of tiny SQLite writes one at a time.
         _BATCH = 20
         sem = asyncio.Semaphore(_BATCH)
+        saved = 0
+        missing_wealth = 0
 
-        async def _process_citizen(user_id: str, country_id: str, citizen_name: Optional[str]) -> None:
+        async def _process_citizen(
+            user_id: str, country_id: str, citizen_name: Optional[str], raw: object,
+        ) -> None:
+            nonlocal saved, missing_wealth
             async with sem:
-                wealth_active, api_name = wealth_map.get(user_id, (0.0, None))
+                user_doc = _unwrap(raw)
+                api_name = user_doc.get("username") if isinstance(user_doc, dict) else None
                 resolved_name = api_name or citizen_name
-                wealth_total = wealth_active  # inactive companies are now included in active
+                wealth = _extract_wealth(raw)
+                if wealth is None:
+                    # Couldn't fetch this one this run (missing/banned/API
+                    # error on this citizen specifically) — leave their
+                    # existing row alone rather than overwriting it with 0s.
+                    missing_wealth += 1
+                    return
+
+                companies = float(wealth.get("companies") or 0.0)
+                items = float(wealth.get("items") or 0.0)
+                money = float(wealth.get("money") or 0.0)
+                equipments = float(wealth.get("equipments") or 0.0)
+                weapons = float(wealth.get("weapons") or 0.0)
+                total = wealth.get("total")
+                wealth_total = float(total) if isinstance(total, (int, float)) else (
+                    companies + items + money + equipments + weapons
+                )
+
                 await self._db.upsert_citizen_wealth(
                     user_id=user_id,
                     country_id=country_id,
                     citizen_name=resolved_name,
-                    wealth_active=wealth_active,
+                    wealth_active=wealth_total,
                     wealth_inactive=0.0,
                     updated_at=now_str,
+                    wealth_companies=companies,
+                    wealth_items=items,
+                    wealth_money=money,
+                    wealth_equipments=equipments,
+                    wealth_weapons=weapons,
                 )
                 await self._db.insert_wealth_snapshot(
                     user_id=user_id,
@@ -186,17 +185,28 @@ class WealthTasks(TaskCogBase, name="wealth_tasks"):
                     citizen_name=resolved_name,
                     wealth_total=wealth_total,
                     snapshot_date=today_date,
+                    wealth_companies=companies,
+                    wealth_items=items,
+                    wealth_money=money,
+                    wealth_equipments=equipments,
+                    wealth_weapons=weapons,
                 )
+                saved += 1
 
-        await asyncio.gather(*[_process_citizen(uid, cid, name) for uid, cid, name in all_citizens])
-        saved = len(all_citizens)
+        await asyncio.gather(*[
+            _process_citizen(uid, cid, name, raw)
+            for (uid, cid, name), raw in zip(all_citizens, raw_results)
+        ])
 
         await self._db.flush_citizen_wealth()
         await self._db.flush_wealth_history()
         await self._db.set_poll_state("wealth_ranking_total", str(saved))
         await self._db.set_poll_state("wealth_ranking_last_run", now_str)
-        logger.info("wealth_refresh: done — %d citizens saved", saved)
-        return {"saved": saved}
+        logger.info(
+            "wealth_refresh: done — %d citizens saved, %d skipped (no wealth data this run)",
+            saved, missing_wealth,
+        )
+        return {"saved": saved, "missing": missing_wealth}
 
 
 async def setup(bot) -> None:

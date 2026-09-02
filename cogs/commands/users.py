@@ -1477,7 +1477,8 @@ class Users(CommandCogBase, name="users"):
             return
 
         await db.delete_identity_link(
-            discord_user_id=discord_user_id
+            discord_user_id=discord_user_id,
+            guild_id=guild_id,
         )
 
         await interaction.response.send_message(

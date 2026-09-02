@@ -18,21 +18,40 @@ class WealthMixin:
         wealth_active: float,
         wealth_inactive: float,
         updated_at: str,
+        wealth_companies: float = 0.0,
+        wealth_items: float = 0.0,
+        wealth_money: float = 0.0,
+        wealth_equipments: float = 0.0,
+        wealth_weapons: float = 0.0,
     ) -> None:
-        """Insert or update a citizen's wealth record."""
+        """Insert or update a citizen's wealth record.
+
+        wealth_companies/items/money/equipments/weapons is the breakdown
+        from user.getUserById's stats.wealth (see cogs/tasks/wealth.py) —
+        defaults to 0 for any caller that only has the combined total.
+        """
         wealth_total = wealth_active + wealth_inactive
         await self._conn.execute(
             "INSERT INTO citizen_wealth"
-            " (user_id, country_id, citizen_name, wealth_active, wealth_inactive_companies, wealth_total, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)"
+            " (user_id, country_id, citizen_name, wealth_active, wealth_inactive_companies, wealth_total,"
+            "  wealth_companies, wealth_items, wealth_money, wealth_equipments, wealth_weapons, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             " ON CONFLICT(user_id) DO UPDATE SET"
             "   country_id                = excluded.country_id,"
             "   citizen_name              = COALESCE(excluded.citizen_name, citizen_wealth.citizen_name),"
             "   wealth_active             = excluded.wealth_active,"
             "   wealth_inactive_companies = excluded.wealth_inactive_companies,"
             "   wealth_total              = excluded.wealth_total,"
+            "   wealth_companies          = excluded.wealth_companies,"
+            "   wealth_items              = excluded.wealth_items,"
+            "   wealth_money              = excluded.wealth_money,"
+            "   wealth_equipments         = excluded.wealth_equipments,"
+            "   wealth_weapons            = excluded.wealth_weapons,"
             "   updated_at                = excluded.updated_at",
-            (user_id, country_id, citizen_name, wealth_active, wealth_inactive, wealth_total, updated_at),
+            (
+                user_id, country_id, citizen_name, wealth_active, wealth_inactive, wealth_total,
+                wealth_companies, wealth_items, wealth_money, wealth_equipments, wealth_weapons, updated_at,
+            ),
         )
 
     async def flush_citizen_wealth(self) -> None:
@@ -112,18 +131,32 @@ class WealthMixin:
         citizen_name: Optional[str],
         wealth_total: float,
         snapshot_date: str,
+        wealth_companies: Optional[float] = None,
+        wealth_items: Optional[float] = None,
+        wealth_money: Optional[float] = None,
+        wealth_equipments: Optional[float] = None,
+        wealth_weapons: Optional[float] = None,
     ) -> None:
         """Insert (or replace) a daily wealth snapshot for a citizen.
 
         ``snapshot_date`` should be an ISO date string (YYYY-MM-DD, UTC).
         Calling this twice on the same day for the same user will update
         the value (REPLACE semantics via the composite primary key).
+
+        wealth_companies/items/money/equipments/weapons is the breakdown
+        from user.getUserById's stats.wealth — left NULL (not defaulted to
+        0) when the caller doesn't have it, so a snapshot predating this
+        breakdown can be told apart from a genuine zero.
         """
         await self._conn.execute(
             "INSERT OR REPLACE INTO citizen_wealth_history"
-            " (user_id, country_id, citizen_name, wealth_total, snapshot_date)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (user_id, country_id, citizen_name, wealth_total, snapshot_date),
+            " (user_id, country_id, citizen_name, wealth_total,"
+            "  wealth_companies, wealth_items, wealth_money, wealth_equipments, wealth_weapons, snapshot_date)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                user_id, country_id, citizen_name, wealth_total,
+                wealth_companies, wealth_items, wealth_money, wealth_equipments, wealth_weapons, snapshot_date,
+            ),
         )
 
     async def flush_wealth_history(self) -> None:

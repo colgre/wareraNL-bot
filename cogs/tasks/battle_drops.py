@@ -142,7 +142,17 @@ class BattleDropsTasks(TaskCogBase, name="battle_drops_tasks"):
                 })},
             )
             d = _unwrap(raw)
-            rankings: list[dict] = d.get("rankings", []) if isinstance(d, dict) else []
+            rankings: list[dict] = []
+            if isinstance(d, dict):
+                # "items" is what the live API actually returns (confirmed
+                # live 2026-08) — "rankings" alone silently returned [] here
+                # for every call once the API moved off it, with no
+                # exception to surface the failure.
+                for key in ("items", "rankings", "ranking", "data", "results"):
+                    v = d.get(key)
+                    if isinstance(v, list):
+                        rankings = v
+                        break
 
             for entry in rankings:
                 loot = entry.get("lootItem")

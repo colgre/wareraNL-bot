@@ -185,11 +185,57 @@ class DiscordBot(commands.Bot):
             for _sql in [
                 "ALTER TABLE resistance_state ADD COLUMN resistance_max REAL DEFAULT 100.0",
                 "ALTER TABLE citizen_luck ADD COLUMN rarity_json TEXT",
+                "ALTER TABLE division_mu_overrides ADD COLUMN mu_id TEXT",
             ]:
                 try:
                     await db.execute(_sql)
                 except Exception:
                     pass  # Column already exists
+
+            # identity_links: migrate off the old discord_user_id-only primary
+            # key to a composite (discord_user_id, guild_id) key — see
+            # schema.sql's comment on this table for why. SQLite can't ALTER a
+            # primary key in place, so this rebuilds the table when (and only
+            # when) the old single-column key is still in use; every row
+            # already has a globally-unique discord_user_id at this point (that
+            # was the old constraint), so the rebuild can never collide.
+            try:
+                cur = await db.execute("PRAGMA table_info(identity_links)")
+                cols = await cur.fetchall()
+                pk_cols = {c[1] for c in cols if c[5]}  # c[5] is the pk column ordinal (0 = not part of PK)
+                if pk_cols == {"discord_user_id"}:
+                    await db.executescript(
+                        """
+                        CREATE TABLE identity_links_new (
+                            discord_user_id        TEXT NOT NULL,
+                            guild_id                TEXT NOT NULL,
+                            in_game_user_id         TEXT NOT NULL,
+                            nationality              TEXT NOT NULL,
+                            request_type             TEXT NOT NULL,
+                            embassy_country          TEXT,
+                            approved_by_discord_id   TEXT NOT NULL,
+                            approved_at              TEXT NOT NULL,
+                            updated_at               TEXT NOT NULL,
+                            PRIMARY KEY (discord_user_id, guild_id)
+                        );
+                        INSERT INTO identity_links_new
+                            SELECT discord_user_id, guild_id, in_game_user_id, nationality,
+                                   request_type, embassy_country, approved_by_discord_id,
+                                   approved_at, updated_at
+                            FROM identity_links;
+                        DROP TABLE identity_links;
+                        ALTER TABLE identity_links_new RENAME TO identity_links;
+                        CREATE INDEX IF NOT EXISTS idx_identity_links_ingame
+                            ON identity_links(in_game_user_id);
+                        """
+                    )
+                    self.logger.info(
+                        "init_db: migrated identity_links to a composite "
+                        "(discord_user_id, guild_id) primary key"
+                    )
+            except Exception:
+                self.logger.exception("init_db: identity_links primary-key migration failed")
+
             await db.commit()
 
     async def _write_command_catalogue(self) -> None:

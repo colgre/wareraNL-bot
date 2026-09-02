@@ -851,6 +851,31 @@ class CitizensMixin:
                 result[str(row[0])] = str(row[1])
         return result
 
+    async def get_citizen_mu_ids_for_users(
+        self, user_ids: list[str]
+    ) -> dict[str, str]:
+        """Return {user_id: mu_id} for the given user_ids (skips nulls).
+
+        ID-based sibling of get_citizen_mu_names_for_users — division
+        matching should key off mu_id, not mu_name, since a MU's name can
+        change in-game (renamed) while its ID never does. Matching by name
+        went stale silently after such a rename (confirmed: "De Munterij"
+        renamed to "De Pomperij" broke every permission tied to the old
+        name).
+        """
+        if not user_ids:
+            return {}
+        placeholders = ",".join("?" * len(user_ids))
+        result: dict[str, str] = {}
+        async with self._conn.execute(
+            f"SELECT user_id, mu_id FROM citizen_levels "
+            f"WHERE user_id IN ({placeholders}) AND mu_id IS NOT NULL",
+            user_ids,
+        ) as cur:
+            async for row in cur:
+                result[str(row[0])] = str(row[1])
+        return result
+
     async def get_nl_citizens_mu_info(
         self, country_id: str
     ) -> list[tuple[str, str | None]]:

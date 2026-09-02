@@ -20,6 +20,7 @@ rijksoverheid_web/
 run_rijksoverheid_web.py
 *.code-workspace
 equipment-item-icons/
+database/external.db.bak-pre-identity-links-migration-20260902202050
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -23,14 +23,18 @@ class IdentityLinksMixin:
         approved_at: str,
         embassy_country: Optional[str] = None,
     ) -> None:
-        """Insert or update a Discord/in-game identity mapping."""
+        """Insert or update a Discord/in-game identity mapping.
+
+        Scoped to (discord_user_id, guild_id) — the same Discord user can
+        hold independent links in different guilds this bot serves (e.g.
+        production + war guild) without one overwriting the other.
+        """
         await self._conn.execute(
             "INSERT INTO identity_links ("
             "discord_user_id, guild_id, in_game_user_id, nationality, request_type, "
             "embassy_country, approved_by_discord_id, approved_at, updated_at"
             ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(discord_user_id) DO UPDATE SET "
-            "guild_id=excluded.guild_id, "
+            "ON CONFLICT(discord_user_id, guild_id) DO UPDATE SET "
             "in_game_user_id=excluded.in_game_user_id, "
             "nationality=excluded.nationality, "
             "request_type=excluded.request_type, "
@@ -55,7 +59,14 @@ class IdentityLinksMixin:
     async def get_identity_link_by_discord(
         self, discord_user_id: str, guild_id: Optional[str] = None
     ) -> Optional[dict]:
-        """Return one identity mapping for a Discord user (optionally scoped to guild)."""
+        """Return one identity mapping for a Discord user (optionally scoped to guild).
+
+        Without guild_id, a user with links in more than one guild can now
+        have more than one matching row (see the table's composite primary
+        key) — this returns whichever was updated most recently, matching
+        the "last write wins" behaviour every unscoped caller already
+        depended on back when discord_user_id alone was the primary key.
+        """
         if guild_id:
             sql = (
                 "SELECT discord_user_id, guild_id, in_game_user_id, nationality, request_type, "
@@ -67,7 +78,8 @@ class IdentityLinksMixin:
             sql = (
                 "SELECT discord_user_id, guild_id, in_game_user_id, nationality, request_type, "
                 "embassy_country, approved_by_discord_id, approved_at, updated_at "
-                "FROM identity_links WHERE discord_user_id = ?"
+                "FROM identity_links WHERE discord_user_id = ? "
+                "ORDER BY updated_at DESC LIMIT 1"
             )
             params = (discord_user_id,)
 
@@ -344,11 +356,25 @@ class IdentityLinksMixin:
                 result[str(row[0])] = str(row[1])
         return result
 
-    async def delete_identity_link(self, discord_user_id: str) -> None:
-        """Delete an identity mapping by Discord user ID."""
-        await self._conn.execute(
-            "DELETE FROM identity_links WHERE discord_user_id = ?", (discord_user_id,)
-        )
+    async def delete_identity_link(
+        self, discord_user_id: str, guild_id: Optional[str] = None
+    ) -> None:
+        """Delete an identity mapping by Discord user ID.
+
+        Without guild_id, deletes that user's link in EVERY guild — pass
+        guild_id to remove only the mapping for one specific guild (e.g. an
+        admin clearing a bad mapping on their own server shouldn't also
+        wipe that user's unrelated link in another guild this bot serves).
+        """
+        if guild_id:
+            await self._conn.execute(
+                "DELETE FROM identity_links WHERE discord_user_id = ? AND guild_id = ?",
+                (discord_user_id, guild_id),
+            )
+        else:
+            await self._conn.execute(
+                "DELETE FROM identity_links WHERE discord_user_id = ?", (discord_user_id,)
+            )
         await self._conn.commit()
 
     async def get_identity_links_by_guild(

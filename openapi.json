@@ -1406,6 +1406,144 @@
         }
       }
     },
+    "/election.getElection": {
+      "post": {
+        "tags": [
+          "election"
+        ],
+        "description": "Retrieves detailed information about a specific election, including every candidate and the full vote tally",
+        "summary": "Get election by ID",
+        "operationId": "election.getElection",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": {
+                  "_id": "6a727d7e614370abfef13566",
+                  "country": "6813b6d446e731854c7ac7a0",
+                  "type": "congress",
+                  "isActive": false,
+                  "status": "finished",
+                  "electedCandidates": [],
+                  "candidates": [
+                    {
+                      "user": "69768dd97ad3b1bff3c53882",
+                      "voteCount": 0,
+                      "isElected": true,
+                      "party": "698d0408d2770456e1ca11d0"
+                    }
+                  ],
+                  "votes": {
+                    "69768dd97ad3b1bff3c53882": 16
+                  },
+                  "votesStartAt": "2026-08-06T00:02:15.445Z",
+                  "votesEndAt": "2026-08-07T00:02:15.445Z",
+                  "votesCount": 331,
+                  "electedCount": 34,
+                  "createdAt": "2026-08-05T00:02:06.977Z"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "electionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The unique identifier of the election"
+                  }
+                },
+                "required": [
+                  "electionId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/election.getElections": {
+      "post": {
+        "tags": [
+          "election"
+        ],
+        "description": "Retrieves a paginated list of elections for a country or party (congress or presidential)",
+        "summary": "Get elections",
+        "operationId": "election.getElections",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": {
+                  "items": [
+                    {
+                      "_id": "6a727d7e614370abfef13566",
+                      "country": "6813b6d446e731854c7ac7a0",
+                      "type": "congress",
+                      "isActive": false,
+                      "status": "finished",
+                      "electedCandidates": [],
+                      "candidates": [
+                        {
+                          "user": "69768dd97ad3b1bff3c53882",
+                          "voteCount": 0,
+                          "isElected": true,
+                          "party": "698d0408d2770456e1ca11d0"
+                        }
+                      ],
+                      "votes": {
+                        "69768dd97ad3b1bff3c53882": 16
+                      },
+                      "votesStartAt": "2026-08-06T00:02:15.445Z",
+                      "votesEndAt": "2026-08-07T00:02:15.445Z",
+                      "votesCount": 331,
+                      "electedCount": 34,
+                      "createdAt": "2026-08-05T00:02:06.977Z"
+                    }
+                  ],
+                  "nextCursor": "v2.W3sidCI6ImRhdGUiLCJ2IjoiMjAyNi0wOC0wNVQwMDowMjowNi45NzdaIn0seyJ0Ijoic3RyIiwidiI6IjZhNzI3ZDdlNjE0MzcwYWJmZWYxMzU2NiJ9XQ"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "countryId": {
+                    "type": "string",
+                    "description": "Filter elections by country ID (either countryId or partyId is required)"
+                  },
+                  "partyId": {
+                    "type": "string",
+                    "description": "Filter elections by party ID (either countryId or partyId is required)"
+                  },
+                  "limit": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "Maximum number of elections to return"
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
     "/event.getEventsPaginated": {
       "post": {
         "tags": [

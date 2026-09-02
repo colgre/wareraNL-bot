@@ -50,8 +50,13 @@ EMBASSY_CATEGORY_ID    = 1495693042194317332
 
 NIGERIAN_ROLE_ID        = 1495692212594409482   # real Nigerian players
 DUTCH_NIGERIAN_ROLE_IDS = [1495692212594409482, 1503755103037817052]  # Dutch players with Nigerian nationality
+VAKANTIEGANGER_ROLE_ID  = DUTCH_NIGERIAN_ROLE_IDS[1]  # "Vakantieganger" — Dutch player currently in Nigeria
 DUTCH_ROLE_ID           = 1495692245519699978
 VERIFIED_ROLE_ID        = 1521895797757575168   # given to everyone on approval
+
+# In-game country IDs, for the nationality-role sync in nick_sync.
+NIGERIA_COUNTRY_ID = "683ddd2c24b5a2e114af15fa"
+NL_COUNTRY_ID      = "6813b6d446e731854c7ac7a0"
 
 STAFF_ROLE_IDS = [1495692303367540767, 1495692272728150016, 1495692461375357009, 1495847731963494400]
 
@@ -358,6 +363,103 @@ async def _fetch_warera_username(
         return await _do_fetch(session)
     async with aiohttp.ClientSession() as sess:
         return await _do_fetch(sess)
+
+
+async def _fetch_warera_country(
+    user_id: str,
+    session: aiohttp.ClientSession | None = None,
+) -> str | None:
+    """Fetch the current in-game country ID for a WarEra user ID. Returns None on failure.
+
+    Same endpoint as _fetch_warera_username (user.getUserLite already
+    includes a "country" field, confirmed live) — kept as a separate
+    function rather than extending that one so its four existing callers
+    are untouched.
+    """
+    url = f"{WARERA_API_BASE}/user.getUserLite"
+    params = {"input": json.dumps({"userId": user_id})}
+    headers = {"x-api-key": WARERA_API_KEY} if WARERA_API_KEY else {}
+
+    async def _do_fetch(sess: aiohttp.ClientSession) -> str | None:
+        for attempt in range(2):  # one retry on 429
+            try:
+                async with sess.get(
+                    url, params=params, headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status == 429:
+                        if attempt == 0:
+                            await asyncio.sleep(2)
+                            continue
+                        return None
+                    if resp.status != 200:
+                        return None
+                    data = await resp.json()
+                    inner = (
+                        data.get("result", {}).get("data")
+                        or data.get("result")
+                        or data
+                    )
+                    if isinstance(inner, dict):
+                        country = inner.get("country")
+                        return str(country) if country else None
+                    return None
+            except Exception as exc:
+                logger.warning("_fetch_warera_country: exception for %s: %s", user_id, exc)
+                return None
+        return None
+
+    if session is not None:
+        return await _do_fetch(session)
+    async with aiohttp.ClientSession() as sess:
+        return await _do_fetch(sess)
+
+
+async def _sync_nationality_role(
+    member: discord.Member, country_id: str, guild: discord.Guild
+) -> str | None:
+    """Swap DUTCH_ROLE_ID <-> (NIGERIAN_ROLE_ID + VAKANTIEGANGER_ROLE_ID) to
+    match a verified member's CURRENT in-game country. Returns a short
+    description of the change made, or None if nothing changed.
+
+    Only acts on members already holding one of these two role combos —
+    deliberately leaves a "real" Nigerian (NIGERIAN_ROLE_ID without
+    VAKANTIEGANGER_ROLE_ID — verified via the plain "nigerian" ticket type)
+    untouched even if their in-game country changes: that role marks
+    community identity, not a live nationality tracker. Vakantieganger, by
+    contrast, exists specifically to mark a Dutch player's *temporary*
+    Nigerian residency and should follow them home the moment it ends.
+    """
+    role_ids = {r.id for r in member.roles}
+    has_dutch = DUTCH_ROLE_ID in role_ids
+    has_dutch_nigerian = (
+        NIGERIAN_ROLE_ID in role_ids and VAKANTIEGANGER_ROLE_ID in role_ids
+    )
+
+    if has_dutch and country_id == NIGERIA_COUNTRY_ID:
+        to_remove_ids = [DUTCH_ROLE_ID]
+        to_add_ids = [NIGERIAN_ROLE_ID, VAKANTIEGANGER_ROLE_ID]
+        change = "Nederlander → Nigeriaan (vakantieganger)"
+    elif has_dutch_nigerian and country_id == NL_COUNTRY_ID:
+        to_remove_ids = [NIGERIAN_ROLE_ID, VAKANTIEGANGER_ROLE_ID]
+        to_add_ids = [DUTCH_ROLE_ID]
+        change = "Nigeriaan (vakantieganger) → Nederlander"
+    else:
+        return None
+
+    to_remove = [r for rid in to_remove_ids if (r := guild.get_role(rid))]
+    to_add = [r for rid in to_add_ids if (r := guild.get_role(rid))]
+    try:
+        if to_remove:
+            await member.remove_roles(*to_remove, reason="Nationaliteitswissel in-game")
+        if to_add:
+            await member.add_roles(*to_add, reason="Nationaliteitswissel in-game")
+    except discord.Forbidden:
+        logger.warning(
+            "_sync_nationality_role: no permission to update roles for %s", member.id
+        )
+        return None
+    return change
 
 
 def _extract_warera_id(url: str) -> str | None:
@@ -1141,6 +1243,7 @@ class VerificationCog(commands.Cog, name="verification"):
             return
 
         updated = 0
+        nationality_updated = 0
         async with aiohttp.ClientSession() as sess:
             for i, (discord_id, warera_id) in enumerate(links):
                 if i > 0:
@@ -1149,22 +1252,49 @@ class VerificationCog(commands.Cog, name="verification"):
                 if not member:
                     continue
                 username = await _fetch_warera_username(warera_id, session=sess)
-                if not username:
+                if username:
+                    await save_link(self._db, discord_id, warera_id, username=username)
+                    current = member.nick or member.name
+                    if current != username[:32]:
+                        try:
+                            await member.edit(
+                                nick=username[:32],
+                                reason="Dagelijkse WarEra gebruikersnaam sync",
+                            )
+                            updated += 1
+                            logger.info("nick_sync: updated %s → %s", discord_id, username)
+                        except discord.Forbidden:
+                            logger.warning(
+                                "nick_sync: no permission to edit nick for %s", discord_id
+                            )
+
+                # Nationality role sync — verified members only, and only for
+                # those holding a role this tracks (Dutch, or the
+                # Nigerian+Vakantieganger "Dutch tourist" combo). See
+                # _sync_nationality_role for why a "real" Nigerian is left alone.
+                member_role_ids = {r.id for r in member.roles}
+                if VERIFIED_ROLE_ID not in member_role_ids:
                     continue
-                await save_link(self._db, discord_id, warera_id, username=username)
-                current = member.nick or member.name
-                if current == username[:32]:
+                tracks_nationality = DUTCH_ROLE_ID in member_role_ids or (
+                    NIGERIAN_ROLE_ID in member_role_ids
+                    and VAKANTIEGANGER_ROLE_ID in member_role_ids
+                )
+                if not tracks_nationality:
                     continue
-                try:
-                    await member.edit(
-                        nick=username[:32],
-                        reason="Dagelijkse WarEra gebruikersnaam sync",
+                await asyncio.sleep(_SYNC_DELAY)
+                country_id = await _fetch_warera_country(warera_id, session=sess)
+                if not country_id:
+                    continue
+                change = await _sync_nationality_role(member, country_id, guild)
+                if change:
+                    nationality_updated += 1
+                    logger.info(
+                        "nick_sync: nationality role updated for %s: %s", discord_id, change
                     )
-                    updated += 1
-                    logger.info("nick_sync: updated %s → %s", discord_id, username)
-                except discord.Forbidden:
-                    logger.warning("nick_sync: no permission to edit nick for %s", discord_id)
-        logger.info("nick_sync: ran for %d members, %d updated", len(links), updated)
+        logger.info(
+            "nick_sync: ran for %d members, %d nicks updated, %d nationality roles updated",
+            len(links), updated, nationality_updated,
+        )
 
     @nick_sync.before_loop
     async def _before_nick_sync(self) -> None:

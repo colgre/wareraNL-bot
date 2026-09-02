@@ -405,7 +405,15 @@ class BattleRankingsTask(TaskCogBase, name="battle_rankings_task"):
     async def _fetch_battle_ranking(
         self, battle_id: str, side: str, rtype: str = "user"
     ) -> list[dict]:
-        """Fetch battleRanking.getRanking for one battle+side, return list of entries."""
+        """Fetch battleRanking.getRanking for one battle+side, return list of entries.
+
+        The list key varies ("items" is what the live API actually returns as
+        of 2026-08 — confirmed live; "rankings" was the only key checked here
+        before, which silently returned [] every call once the API moved off
+        it, with no exception to surface the failure. See the multi-key
+        fallback in cogs/tasks/daily_dmg.py / battle_drops.py for the same
+        pattern).
+        """
         try:
             raw = await self._client.get(
                 "/battleRanking.getRanking",
@@ -432,7 +440,11 @@ class BattleRankingsTask(TaskCogBase, name="battle_rankings_task"):
 
         data = _unwrap(raw)
         if isinstance(data, dict):
-            return [e for e in data.get("rankings", []) if isinstance(e, dict)]
+            for key in ("items", "rankings", "ranking", "data", "results"):
+                v = data.get(key)
+                if isinstance(v, list):
+                    return [e for e in v if isinstance(e, dict)]
+            return []
         if isinstance(data, list):
             return [e for e in data if isinstance(e, dict)]
         return []

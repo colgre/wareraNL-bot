@@ -163,6 +163,20 @@ class DatabaseBase:
             # citizen_levels — mirrors getUserLite's infos.isBanned, so a
             # company's worker being banned can likewise be checked for free.
             ("citizen_levels", "is_banned INTEGER NOT NULL DEFAULT 0"),
+            # citizen_wealth / citizen_wealth_history — wealth breakdown by
+            # category (user.getUserById's stats.wealth), added so the
+            # player page can show/hide company wealth specifically instead
+            # of only ever the combined total.
+            ("citizen_wealth", "wealth_companies REAL NOT NULL DEFAULT 0"),
+            ("citizen_wealth", "wealth_items REAL NOT NULL DEFAULT 0"),
+            ("citizen_wealth", "wealth_money REAL NOT NULL DEFAULT 0"),
+            ("citizen_wealth", "wealth_equipments REAL NOT NULL DEFAULT 0"),
+            ("citizen_wealth", "wealth_weapons REAL NOT NULL DEFAULT 0"),
+            ("citizen_wealth_history", "wealth_companies REAL"),
+            ("citizen_wealth_history", "wealth_items REAL"),
+            ("citizen_wealth_history", "wealth_money REAL"),
+            ("citizen_wealth_history", "wealth_equipments REAL"),
+            ("citizen_wealth_history", "wealth_weapons REAL"),
         ]
         for table, column_def in migrations:
             try:

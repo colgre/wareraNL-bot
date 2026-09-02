@@ -769,8 +769,22 @@ class WarSyncCog(TaskCogBase, name="war_sync"):
             return 0
 
         # Step 1: paginate all MU IDs/names
-        all_mus = await self._paginate_all_mus()
+        try:
+            all_mus = await self._paginate_all_mus()
+        except Exception as exc:
+            logger.warning(
+                "war_sync: _paginate_all_mus failed (API likely down) — "
+                "aborting scan without touching any roles: %s", exc,
+            )
+            return 0
         logger.info("war_sync: found %d MUs in total", len(all_mus))
+        if not all_mus:
+            logger.warning(
+                "war_sync: getManyPaginated returned zero MUs — treating as a "
+                "failed fetch, not \"the game has no MUs\", and aborting the "
+                "scan without touching any roles"
+            )
+            return 0
 
         # Step 2: batch-fetch detailed MU info
         mu_ids = [m["mu_id"] for m in all_mus]
@@ -909,6 +923,18 @@ class WarSyncCog(TaskCogBase, name="war_sync"):
             )
         new_user_mu_roles = deduped
 
+        # Safety net: don't let a scan that found zero Dutch MUs (e.g. every
+        # per-MU detail fetch failed, even though all_mus itself wasn't
+        # empty) wipe out good cached/persisted data from the last
+        # successful scan — same reasoning as the _cleanup_removed_mus guard.
+        if not dutch_mus and (self._user_mu_roles or self._mu_discord_role_ids):
+            logger.warning(
+                "war_sync: scan found 0 Dutch MUs but the previous scan had %d — "
+                "keeping the old cache/DB data instead of overwriting it",
+                len(self._user_mu_roles),
+            )
+            return 0
+
         # Persist user→MU membership so other features (e.g. war status) can
         # look up a player's MU even when citizen_levels.mu_name is null.
         if self._db:
@@ -983,7 +1009,17 @@ class WarSyncCog(TaskCogBase, name="war_sync"):
         return removed
 
     async def _paginate_all_mus(self) -> list[dict[str, str]]:
-        """Return [{mu_id, mu_name}] for all MUs in the game."""
+        """Return [{mu_id, mu_name}] for all MUs in the game.
+
+        Raises on an API failure instead of swallowing it into a partial/empty
+        result — the caller (_scan_dutch_mus_body) treats an empty MU list as
+        "no Dutch MUs exist right now" and cleans up every tracked role
+        accordingly. Confirmed as the cause of a real incident: a WarEra API
+        outage made the very first page fail here, which used to be caught
+        and turned into an empty list, which then made the scan delete every
+        MU role in the war guild. Letting the exception propagate makes the
+        scan abort before touching any roles (see _scan_dutch_mus_body).
+        """
         mus: list[dict[str, str]] = []
         cursor: str | None = None
 
@@ -993,14 +1029,10 @@ class WarSyncCog(TaskCogBase, name="war_sync"):
             params: dict[str, Any] = {"limit": 100}
             if cursor:
                 params["cursor"] = cursor
-            try:
-                resp = await self._client.get(
-                    "/mu.getManyPaginated",
-                    params={"input": json.dumps(params)},
-                )
-            except Exception as exc:
-                logger.warning("war_sync: _paginate_all_mus API error: %s", exc)
-                break
+            resp = await self._client.get(
+                "/mu.getManyPaginated",
+                params={"input": json.dumps(params)},
+            )
 
             data_obj: Any = resp
             if isinstance(resp, dict):
@@ -1198,6 +1230,23 @@ class WarSyncCog(TaskCogBase, name="war_sync"):
             all_rows = await self._db.get_all_war_mu_roles(str(war_guild.id))
         except Exception as exc:
             logger.warning("war_sync: _cleanup_removed_mus query failed: %s", exc)
+            return
+
+        # Safety net: active_mu_ids empty while roles are already tracked
+        # almost never means every single Dutch MU genuinely disappeared in
+        # one scan — it means the scan failed to find any (API outage, a
+        # partial per-MU detail-fetch failure, etc). _scan_dutch_mus_body
+        # already aborts before this point when the MU list itself is
+        # empty; this catches the case where MUs were found but every
+        # "is it Dutch" detail lookup failed, so treating that as "clean up
+        # everything" doesn't repeat the mass role-deletion incident this
+        # guarded against.
+        if not active_mu_ids and all_rows:
+            logger.warning(
+                "war_sync: 0 Dutch MUs identified this scan but %d MU role(s) "
+                "are tracked — skipping cleanup instead of deleting them all",
+                len(all_rows),
+            )
             return
 
         removed_mu_ids: set[str] = set()
