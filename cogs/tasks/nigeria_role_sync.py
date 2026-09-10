@@ -4,8 +4,9 @@ Every 6 hours, iterates all members of the production guild who have the
 Netherlands role and adds or removes country roles based on in-game country.
 
 Supported countries:
-  - Nigeria   -> role 1530164551163842611
-  - Luxembourg -> role 1531298705892835498
+  - Nigeria           -> role 1530164551163842611
+  - Luxembourg        -> role 1531298705892835498
+  - Equatorial Guinea -> role 1547651313397928006
 
 Lookup strategy (in order):
   1. Refresh the target countries live from the WarEra API into citizen_levels
@@ -39,11 +40,13 @@ _INACTIVE_THRESHOLD = timedelta(days=3)
 _COUNTRY_ROLES: dict[str, int] = {
     "683ddd2c24b5a2e114af15fa": 1530164551163842611,  # Nigeria
     "6813b6d446e731854c7ac7fb": 1531298705892835498,  # Luxembourg
+    "6873d0ea1758b40e712b5f31": 1547651313397928006,  # Equatorial Guinea
 }
 
 _COUNTRY_NAMES: dict[str, str] = {
     "683ddd2c24b5a2e114af15fa": "Nigeria",
     "6813b6d446e731854c7ac7fb": "Luxemburg",
+    "6873d0ea1758b40e712b5f31": "Equatoriaal-Guinea",
 }
 
 
