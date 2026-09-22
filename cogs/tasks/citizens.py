@@ -801,5 +801,18 @@ class CitizenTasks(TaskCogBase, name="citizen_tasks"):
 
 
 async def setup(bot) -> None:
-    """Add the CitizenTasks cog to the bot."""
-    await bot.add_cog(CitizenTasks(bot))
+    """Add the CitizenTasks cog to the bot.
+
+    Registered guild-only (same reasoning as cogs/owner.py's setup()) so
+    /syncnicknames is instantly available and doesn't eat into the 100
+    global slash-command budget for a command that only ever makes sense
+    for this one guild's NL members anyway. A cog added without `guilds=`
+    registers globally by default, which both counts against that 91/100
+    global-command budget AND can take up to an hour to actually show up
+    for users even after a successful tree.sync() — confirmed live:
+    /syncnicknames stayed invisible after `!sync guild` specifically
+    because that only re-syncs the guild-scoped pool, never global commands.
+    """
+    guild_id = int(bot.config.get("guild_id") or 0)
+    guilds = [discord.Object(id=guild_id)] if guild_id else []
+    await bot.add_cog(CitizenTasks(bot), guilds=guilds or None)

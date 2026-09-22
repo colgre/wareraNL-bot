@@ -15,9 +15,11 @@
 # a shared repo / a live production bot and stay explicit actions you take
 # yourself — see the bottom of this file for the one-line command for each.
 #
-# Usage: ./sync-and-pr.sh ["commit message"]
-#   Uncommitted changes are committed with the given message, or with an
-#   auto-generated "Update <N> file(s)" message if none is given.
+# Usage: ./sync-and-pr.sh [commit message]
+#   Uncommitted changes are committed with the given message — quoted or
+#   not, e.g. both `./sync-and-pr.sh "fix foo"` and `./sync-and-pr.sh fix foo`
+#   work — or with an auto-generated "Update <N> file(s)" message if none
+#   is given.
 #
 # Requires: gh CLI, authenticated (`gh auth login`).
 
@@ -40,7 +42,7 @@ if [[ "$current_branch" != "$BASE_BRANCH" ]]; then
     exit 1
 fi
 
-commit_msg="${1:-}"
+commit_msg="$*"
 
 if [[ -n "$(git status --porcelain)" ]]; then
     echo "==> Committing uncommitted changes..."
