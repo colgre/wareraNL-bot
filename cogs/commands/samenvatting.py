@@ -24,8 +24,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger("discord_bot")
 
 # Maximum number of messages to feed to the model per call.
-# gpt-4o-mini has a 128k context window; even 500 long Discord messages
-# rarely exceed 50k tokens, so 500 is a safe ceiling.
+# gpt-4.1-mini has a 1M-token context window; even 500 long Discord
+# messages rarely exceed 50k tokens, so 500 is a safe ceiling.
 _MAX_MESSAGES = 500
 
 # System prompts per detail level
@@ -182,7 +182,7 @@ class SamenvattingCog(commands.Cog, name="samenvatting"):
         label = f"{uren} uur" if uren != 1 else "1 uur"
         detail_label = {"globaal": "globaal", "normaal": "normaal", "gedetailleerd": "gedetailleerd"}.get(detailniveau, detailniveau)
         truncated_note = f" • ⚠️ afgekapt op {_MAX_MESSAGES}" if truncated else ""
-        footer = f"{len(messages)} berichten{truncated_note} • model: gpt-4o-mini • {detail_label}"
+        footer = f"{len(messages)} berichten{truncated_note} • model: gpt-4.1-mini • {detail_label}"
 
         # Split long summaries (gedetailleerd can exceed embed description limit)
         _EMBED_MAX = 4000
@@ -238,7 +238,7 @@ class SamenvattingCog(commands.Cog, name="samenvatting"):
         )
 
         payload = {
-            "model": "gpt-4o-mini",
+            "model": "gpt-4.1-mini",
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
