@@ -5667,6 +5667,508 @@
           }
         }
       }
+    },
+    "/employee.getMyEmployees": {
+      "post": {
+        "tags": [
+          "employee"
+        ],
+        "description": "Retrieves every employee the calling account owns, across all of its companies (v0.27's new hired-employee system). Confirmed live and reachable with our normal, non-premium keys \u2014 scoped to whichever account the API key itself belongs to, no parameters taken. Each employee carries its stats (base/trained/revealed), traits, potential, wage, wageExpectation, training/specialization history, happiness breakdown, production bonus breakdown, and an `estimate` of its own hourly production value and wage (in money, already price-converted \u2014 confirmed these sum exactly to the company-level `hourly` totals from employee.getCompanyRoster).",
+        "summary": "Get all of my employees",
+        "operationId": "employee.getMyEmployees",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": [
+                  {
+                    "_id": "6ae068ede0e402e19d593484",
+                    "owner": "695579c03f0cff6efb694b3a",
+                    "company": "695579c03f0cff6efb694b4a",
+                    "region": "683ddd3e36dbc90b78047525",
+                    "name": "Augustina Oluwakemi",
+                    "gender": "female",
+                    "age": 43,
+                    "base": {
+                      "production": 5,
+                      "luck": 3,
+                      "responsibility": 2
+                    },
+                    "trained": {
+                      "production": 2,
+                      "luck": 1,
+                      "responsibility": 0
+                    },
+                    "revealed": {
+                      "production": true,
+                      "luck": true,
+                      "responsibility": true
+                    },
+                    "traits": [
+                      {
+                        "code": "patriot",
+                        "revealed": true
+                      }
+                    ],
+                    "potential": 2,
+                    "potentialMax": 10,
+                    "wage": 0.121011,
+                    "wageExpectation": 0.997,
+                    "nationality": "683ddd2c24b5a2e114af15fa",
+                    "estimate": {
+                      "production": 1.93,
+                      "wage": 0.121011
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/employee.getMyWorkforceSummary": {
+      "post": {
+        "tags": [
+          "employee"
+        ],
+        "description": "Retrieves a one-call summary of the calling account's entire workforce across all companies: headcount, how many are trainable today, how many managers are assigned, toolboxes found so far, and totals for hourly production value, toolbox find rate, wage cost and manager cost. Confirmed live and reachable with our normal, non-premium keys; no parameters taken.",
+        "summary": "Get my workforce summary",
+        "operationId": "employee.getMyWorkforceSummary",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": {
+                  "employeeCount": 6,
+                  "trainableCount": 1,
+                  "managerCount": 1,
+                  "foundToolboxes": 0,
+                  "production": 5.96,
+                  "toolboxesPerHour": 0.021,
+                  "wageCost": 0.526719,
+                  "managerCost": 0.009688
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/employee.getCompanyEmployees": {
+      "post": {
+        "tags": [
+          "employee"
+        ],
+        "description": "Retrieves one company's employee roster \u2014 same per-employee shape as employee.getMyEmployees. Confirmed live, public and reachable with our normal, non-premium keys for ANY companyId, not just ones the calling key's account owns.",
+        "summary": "Get a company's employees",
+        "operationId": "employee.getCompanyEmployees",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": [
+                  {
+                    "_id": "6adf6bf97126dd06576a3156",
+                    "owner": "69cd49c47cb52642db20b15c",
+                    "company": "69f744f2f5ec4c7f12cdd9af",
+                    "name": "Maria Alice Barros",
+                    "wage": 0.092633,
+                    "wageExpectation": 0.954,
+                    "estimate": {
+                      "production": 1.11,
+                      "wage": 0.092633
+                    },
+                    "productionBonus": {
+                      "total": 11.4,
+                      "contributions": [
+                        {
+                          "source": "management",
+                          "percent": 10
+                        },
+                        {
+                          "source": "coreRegion",
+                          "percent": 5
+                        },
+                        {
+                          "source": "happiness",
+                          "percent": -6.6
+                        },
+                        {
+                          "source": "specialization",
+                          "percent": 3
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "companyId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The company's ID"
+                  }
+                },
+                "required": [
+                  "companyId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/employee.getCompanyRoster": {
+      "post": {
+        "tags": [
+          "employee"
+        ],
+        "description": "Like employee.getCompanyEmployees, but also includes an `hourly` block with the company-wide totals \u2014 confirmed these are the exact sum, across every employee, of each one's own `estimate.production`/`estimate.wage` (i.e. already-aggregated hourly MONEY figures, not raw production points): `{production, toolboxes, wageCost, managerCost, cap}`. This is the single best source for a company's current real employee profit: hourly profit = hourly.production - hourly.wageCost - hourly.managerCost, live right now, no lag. Confirmed live, public, reachable with our normal, non-premium keys for any companyId.",
+        "summary": "Get a company's full employee roster + hourly totals",
+        "operationId": "employee.getCompanyRoster",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": {
+                  "employees": [
+                    {
+                      "_id": "6adf6bf97126dd06576a3156",
+                      "name": "Maria Alice Barros",
+                      "wage": 0.092633,
+                      "estimate": {
+                        "production": 1.11,
+                        "wage": 0.092633
+                      }
+                    },
+                    {
+                      "_id": "6adf6f2128373ea129dd997e",
+                      "name": "Barry Schmeler",
+                      "wage": 0.051123,
+                      "estimate": {
+                        "production": 1.67,
+                        "wage": 0.051123
+                      }
+                    },
+                    {
+                      "_id": "6ae12f7517e2e0504dee6e8d",
+                      "name": "Helena Saraiva",
+                      "wage": 0.028645,
+                      "estimate": {
+                        "production": 0.3,
+                        "wage": 0.028645
+                      }
+                    }
+                  ],
+                  "hourly": {
+                    "production": 3.08,
+                    "toolboxes": 0.006,
+                    "wageCost": 0.172401,
+                    "managerCost": 0,
+                    "cap": 3
+                  }
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "companyId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The company's ID"
+                  }
+                },
+                "required": [
+                  "companyId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/employee.getCompanyEstimate": {
+      "post": {
+        "tags": [
+          "employee"
+        ],
+        "description": "Just the `hourly` block from employee.getCompanyRoster, without the employee list \u2014 the cheapest call for a company's current real employee profit: hourly profit = production - wageCost - managerCost, in money, live right now (no lag, unlike work.getStatsByCompany's daily-aggregated and currently ~1-day-delayed figures). `cap` is the company's current max employee slots. Confirmed live, public, reachable with our normal, non-premium keys for any companyId.",
+        "summary": "Get a company's hourly employee production/wage estimate",
+        "operationId": "employee.getCompanyEstimate",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": {
+                  "production": 3.08,
+                  "toolboxes": 0.006,
+                  "wageCost": 0.172401,
+                  "managerCost": 0,
+                  "cap": 3
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "companyId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The company's ID"
+                  }
+                },
+                "required": [
+                  "companyId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/employee.getManagerPointValue": {
+      "post": {
+        "tags": [
+          "employee"
+        ],
+        "description": "Retrieves the hourly production value one additional Management skill point from a manager would add to this company. Confirmed live, public, reachable with our normal, non-premium keys for any companyId.",
+        "summary": "Get a manager's per-point value for a company",
+        "operationId": "employee.getManagerPointValue",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": {
+                  "productionPerPoint": 0.05
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "companyId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The company's ID"
+                  }
+                },
+                "required": [
+                  "companyId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/employee.getById": {
+      "post": {
+        "tags": [
+          "employee"
+        ],
+        "description": "Retrieves one employee by ID \u2014 same shape as one entry of employee.getCompanyRoster's `employees` list. Confirmed live, public, reachable with our normal, non-premium keys; an unknown employeeId returns `null` rather than erroring.",
+        "summary": "Get one employee by ID",
+        "operationId": "employee.getById",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": {
+                  "_id": "6adf6bf97126dd06576a3156",
+                  "owner": "69cd49c47cb52642db20b15c",
+                  "company": "69f744f2f5ec4c7f12cdd9af",
+                  "name": "Maria Alice Barros",
+                  "wage": 0.092633,
+                  "estimate": {
+                    "production": 1.11,
+                    "wage": 0.092633
+                  }
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "employeeId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The employee's ID (not a user/citizen ID)"
+                  }
+                },
+                "required": [
+                  "employeeId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/employeeEvent.getMine": {
+      "post": {
+        "tags": [
+          "employeeEvent"
+        ],
+        "description": "Retrieves the calling account's pending employee events (e.g. training-card picks) and any auto-picked outcomes not yet acknowledged. Confirmed live and reachable with our normal, non-premium keys; no parameters taken. Returned empty for our test account (no pending events at probe time).",
+        "summary": "Get my pending employee events",
+        "operationId": "employeeEvent.getMine",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": []
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/employeeEvent.getPendingCount": {
+      "post": {
+        "tags": [
+          "employeeEvent"
+        ],
+        "description": "Retrieves just the count of employee events waiting for the calling account's decision. Confirmed live and reachable with our normal, non-premium keys; no parameters taken.",
+        "summary": "Get my pending employee event count",
+        "operationId": "employeeEvent.getPendingCount",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": 0
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/employeeEvent.getHistory": {
+      "post": {
+        "tags": [
+          "employeeEvent"
+        ],
+        "description": "Retrieves one of the calling account's own employees' event history, newest first (training-card picks, trait gains, etc. \u2014 matches the shape seen in that employee's own `trainingHistory`). Confirmed live and reachable with our normal, non-premium keys; returned an empty list for an employee with no recorded events at probe time.",
+        "summary": "Get one employee's event history",
+        "operationId": "employeeEvent.getHistory",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": []
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "employeeId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The employee's ID (not a user/citizen ID)"
+                  }
+                },
+                "required": [
+                  "employeeId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
     }
   },
   "servers": [

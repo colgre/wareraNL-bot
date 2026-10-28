@@ -449,6 +449,19 @@ class General(commands.Cog, name="general"):
             except discord.HTTPException as e:
                 self.bot.logger.error(f"Failed to send pils gif for message {message.id}: {e}")
 
+        # ezel / donkey → random GIF
+        if any(w in words for w in ("ezel", "donkey")):
+            gif = random.choice((
+                "https://klipy.com/gifs/feliz-alegre-2",
+                "https://klipy.com/gifs/tongue-out-tickle-8",
+                "https://klipy.com/gifs/laughing-funny-167",
+                "https://klipy.com/gifs/donkey-flip",
+            ))
+            try:
+                await message.channel.send(gif)
+            except discord.HTTPException as e:
+                self.bot.logger.error(f"Failed to send ezel gif for message {message.id}: {e}")
+
         if "app.warera.io" not in content.lower():
             return
         try:
