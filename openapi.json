@@ -5673,7 +5673,7 @@
         "tags": [
           "employee"
         ],
-        "description": "Retrieves every employee the calling account owns, across all of its companies (v0.27's new hired-employee system). Confirmed live and reachable with our normal, non-premium keys \u2014 scoped to whichever account the API key itself belongs to, no parameters taken. Each employee carries its stats (base/trained/revealed), traits, potential, wage, wageExpectation, training/specialization history, happiness breakdown, production bonus breakdown, and an `estimate` of its own hourly production value and wage (in money, already price-converted \u2014 confirmed these sum exactly to the company-level `hourly` totals from employee.getCompanyRoster).",
+        "description": "Retrieves every employee the calling account owns, across all of its companies (v0.27's new hired-employee system). Confirmed live and reachable with our normal, non-premium keys \u2014 scoped to whichever account the API key itself belongs to, no parameters taken. Each employee carries its stats (base/trained/revealed), traits, potential, wage, wageExpectation, training/specialization history, happiness breakdown, production bonus breakdown, and an `estimate` of its own hourly output: `production` is raw production POINTS per hour, not money (multiply by gameStat.getPpMoneyValue to get money), and `wage` is money per hour. These sum exactly to the company-level `hourly` totals from employee.getCompanyRoster.",
         "summary": "Get all of my employees",
         "operationId": "employee.getMyEmployees",
         "responses": {
@@ -5744,7 +5744,7 @@
         "tags": [
           "employee"
         ],
-        "description": "Retrieves a one-call summary of the calling account's entire workforce across all companies: headcount, how many are trainable today, how many managers are assigned, toolboxes found so far, and totals for hourly production value, toolbox find rate, wage cost and manager cost. Confirmed live and reachable with our normal, non-premium keys; no parameters taken.",
+        "description": "Retrieves a one-call summary of the calling account's entire workforce across all companies: headcount, how many are trainable today, how many managers are assigned, toolboxes found so far, and hourly totals: `production` in raw production POINTS (multiply by gameStat.getPpMoneyValue to get money), toolbox find rate, and `wageCost` and `managerCost` in money. Confirmed live and reachable with our normal, non-premium keys; no parameters taken.",
         "summary": "Get my workforce summary",
         "operationId": "employee.getMyWorkforceSummary",
         "responses": {
@@ -5858,7 +5858,7 @@
         "tags": [
           "employee"
         ],
-        "description": "Like employee.getCompanyEmployees, but also includes an `hourly` block with the company-wide totals \u2014 confirmed these are the exact sum, across every employee, of each one's own `estimate.production`/`estimate.wage` (i.e. already-aggregated hourly MONEY figures, not raw production points): `{production, toolboxes, wageCost, managerCost, cap}`. This is the single best source for a company's current real employee profit: hourly profit = hourly.production - hourly.wageCost - hourly.managerCost, live right now, no lag. Confirmed live, public, reachable with our normal, non-premium keys for any companyId.",
+        "description": "Like employee.getCompanyEmployees, but also includes an `hourly` block with the company-wide totals \u2014 confirmed these are the exact sum, across every employee, of each one's own `estimate.production`/`estimate.wage`: `{production, toolboxes, wageCost, managerCost, cap}`. `production` is raw production POINTS per hour, NOT money, while `wageCost` and `managerCost` are money per hour, so production has to be converted before subtracting. This is the single best source for a company's current real employee profit: hourly profit = hourly.production * gameStat.getPpMoneyValue - hourly.wageCost - hourly.managerCost, live right now, no lag. Confirmed live, public, reachable with our normal, non-premium keys for any companyId.",
         "summary": "Get a company's full employee roster + hourly totals",
         "operationId": "employee.getCompanyRoster",
         "responses": {
@@ -5935,7 +5935,7 @@
         "tags": [
           "employee"
         ],
-        "description": "Just the `hourly` block from employee.getCompanyRoster, without the employee list \u2014 the cheapest call for a company's current real employee profit: hourly profit = production - wageCost - managerCost, in money, live right now (no lag, unlike work.getStatsByCompany's daily-aggregated and currently ~1-day-delayed figures). `cap` is the company's current max employee slots. Confirmed live, public, reachable with our normal, non-premium keys for any companyId.",
+        "description": "Just the `hourly` block from employee.getCompanyRoster, without the employee list \u2014 the cheapest call for a company's current real employee profit: hourly profit = production * gameStat.getPpMoneyValue - wageCost - managerCost, in money, live right now (`production` is raw production POINTS per hour, the two costs are already money; no lag, unlike work.getStatsByCompany's daily-aggregated and currently ~1-day-delayed figures). `cap` is the company's current max employee slots. Confirmed live, public, reachable with our normal, non-premium keys for any companyId.",
         "summary": "Get a company's hourly employee production/wage estimate",
         "operationId": "employee.getCompanyEstimate",
         "responses": {
@@ -5981,7 +5981,7 @@
         "tags": [
           "employee"
         ],
-        "description": "Retrieves the hourly production value one additional Management skill point from a manager would add to this company. Confirmed live, public, reachable with our normal, non-premium keys for any companyId.",
+        "description": "Retrieves the hourly production one additional Management skill point from a manager would add to this company. Confirmed live, public, reachable with our normal, non-premium keys for any companyId.",
         "summary": "Get a manager's per-point value for a company",
         "operationId": "employee.getManagerPointValue",
         "responses": {
