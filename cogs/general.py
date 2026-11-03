@@ -135,33 +135,6 @@ class General(commands.Cog, name="general"):
         if message.author.bot:
             return
 
-        # Tagging this user (176648226521350144) on the production guild →
-        # fixed reply using their current server nickname. Checks raw content
-        # for an explicit <@id> tag rather than message.mentions, since
-        # mentions also includes the replied-to author on a ping-reply even
-        # without an actual @tag in the text.
-        if (
-            message.guild
-            and message.guild.id == 1401530718223335496
-            and (
-                "<@176648226521350144>" in message.content
-                or "<@!176648226521350144>" in message.content
-            )
-        ):
-            member = message.guild.get_member(176648226521350144)
-            if member is None:
-                try:
-                    member = await message.guild.fetch_member(176648226521350144)
-                except discord.HTTPException:
-                    member = None
-            name = member.display_name if member else "Deze gebruiker"
-            try:
-                await message.channel.send(f"{name} heeft wel betere dingen te doen")
-            except discord.HTTPException as e:
-                self.bot.logger.error(
-                    f"Failed to send unreachable message for message {message.id}: {e}"
-                )
-
         content = message.content or ""
         # self.bot.logger.debug(f"Received message: {content} from {message.author} "
         # f"in {getattr(message.channel, 'id', 'DM')}")
