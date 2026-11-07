@@ -232,7 +232,7 @@ async def fetch_alliance_countries(client: APIClient, db: Database) -> int:
             )
 
         now = datetime.now(timezone.utc).isoformat()
-        rows: list[tuple[str, str, str]] = []
+        rows: list[tuple[str, str, str, bool]] = []
         for alliance in items:
             if not isinstance(alliance, dict):
                 continue
@@ -245,7 +245,7 @@ async def fetch_alliance_countries(client: APIClient, db: Database) -> int:
                     continue
                 cid = member.get("country")
                 if cid:
-                    rows.append((aid, name, str(cid)))
+                    rows.append((aid, name, str(cid), bool(member.get("suspended"))))
 
         written = await db.save_alliance_countries(rows, now)
         duration_ms = int((time.monotonic() - started) * 1000)
@@ -264,54 +264,11 @@ async def fetch_alliance_countries(client: APIClient, db: Database) -> int:
         return 0
 
 
-async def _fetch_base_cooldown_hours_by_country(
-    client: APIClient, country_ids: list[str]
-) -> dict[str, float]:
-    """Resolve each country's current base-upgrade cooldown length (hours).
-
-    Bunkers always cool down in 8h regardless of politics — this is only for
-    "base", whose cooldown is shortened by the *owning* country's ruling
-    party's militarism ethic: 8h normally, 4h at militarism 1 (Expansionist),
-    2h at militarism >= 2 (Fanatic Expansionist). Two extra sweeps of
-    tRPC-batched lookups (country -> rulingParty -> ethics.militarism), each
-    keyed by the small set of *distinct* countries/parties actually present
-    (~190, not per-region), so this stays cheap next to the 726-region
-    upgrade-status sweep it feeds into.
-    """
-    country_ids = sorted(set(country_ids))
-    country_results = await client.batch_get(
-        "/country.getCountryById",
-        [{"countryId": cid} for cid in country_ids],
-        batch_size=_REGION_STATUS_BATCH,
-    )
-    ruling_party: dict[str, str] = {}
-    for cid, raw_c in zip(country_ids, country_results):
-        c = _unwrap_trpc(raw_c) if isinstance(raw_c, dict) else raw_c
-        party = c.get("rulingParty") if isinstance(c, dict) else None
-        if party:
-            ruling_party[cid] = str(party)
-
-    party_ids = sorted(set(ruling_party.values()))
-    party_results = await client.batch_get(
-        "/party.getById",
-        [{"partyId": pid} for pid in party_ids],
-        batch_size=_REGION_STATUS_BATCH,
-    )
-    militarism_by_party: dict[str, int] = {}
-    for pid, raw_p in zip(party_ids, party_results):
-        p = _unwrap_trpc(raw_p) if isinstance(raw_p, dict) else raw_p
-        ethics = p.get("ethics") if isinstance(p, dict) else None
-        if isinstance(ethics, dict):
-            try:
-                militarism_by_party[pid] = int(ethics.get("militarism") or 0)
-            except (TypeError, ValueError):
-                pass
-
-    cooldown_by_country: dict[str, float] = {}
-    for cid in country_ids:
-        militarism = militarism_by_party.get(ruling_party.get(cid, ""), 0)
-        cooldown_by_country[cid] = 2.0 if militarism >= 2 else 4.0 if militarism == 1 else 8.0
-    return cooldown_by_country
+# Both base and bunker upgrades cool down for upgrade.regionUpgradeCooldownHours
+# (gameConfig: 8). A ruling party's militarism ethic used to shorten the base
+# cooldown to 4h / 2h; party ethics were removed from the game, so it is now
+# the same 8h everywhere.
+_REGION_UPGRADE_COOLDOWN_HOURS = 8.0
 
 
 async def fetch_region_status(client: APIClient, db: Database) -> tuple[int, int]:
@@ -332,7 +289,7 @@ async def fetch_region_status(client: APIClient, db: Database) -> tuple[int, int
     rather than silently dropping the region from the output.
 
     Also captures each upgrade's ``lastUpgradeAt`` plus the resolved cooldown
-    length (see ``_fetch_base_cooldown_hours_by_country``), so the extension
+    length (``_REGION_UPGRADE_COOLDOWN_HOURS``), so the extension
     can show "still on cooldown" independent of active/pending/disabled
     status — the cooldown blocks starting a new upgrade *or* downgrade
     regardless of the upgrade's current state.
@@ -350,23 +307,12 @@ async def fetch_region_status(client: APIClient, db: Database) -> tuple[int, int
 
         now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         region_ids = [str(r.get("_id")) for r in regions if r.get("_id")]
-        # Owning country per region — already present on region.getAll's own
-        # objects (the `country` field), no extra API call needed for this part.
-        region_country = {
-            str(r.get("_id")): str(r.get("country"))
-            for r in regions if r.get("_id") and r.get("country")
-        }
-
         resistance_rows = [
             (str(r.get("_id")), _to_float(r.get("resistance")) or 0.0,
              _to_float(r.get("resistanceMax")) or 0.0)
             for r in regions if r.get("_id")
         ]
         res_written = await db.save_region_resistance(resistance_rows, now_iso)
-
-        base_cooldown_by_country = await _fetch_base_cooldown_hours_by_country(
-            client, list(region_country.values())
-        )
 
         upgrade_written: dict[str, int] = {}
         for upgrade_type in ("base", "bunker"):
@@ -391,11 +337,10 @@ async def fetch_region_status(client: APIClient, db: Database) -> tuple[int, int
                     # response to None. Same meaning as an explicit disabled/
                     # level 0, not a fetch failure to skip.
                     status, level, will_be_active_at, last_upgrade_at = "disabled", 0, None, None
-                cooldown_hours = (
-                    8.0 if upgrade_type == "bunker"
-                    else base_cooldown_by_country.get(region_country.get(rid, ""), 8.0)
-                )
-                rows.append((rid, status, level, will_be_active_at, last_upgrade_at, cooldown_hours))
+                rows.append((
+                    rid, status, level, will_be_active_at, last_upgrade_at,
+                    _REGION_UPGRADE_COOLDOWN_HOURS,
+                ))
             upgrade_written[upgrade_type] = await db.save_region_upgrade_status(
                 upgrade_type, rows, now_iso
             )

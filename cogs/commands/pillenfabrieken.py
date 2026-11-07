@@ -246,53 +246,6 @@ class PillenfabriekenCog(CommandCogBase, name="pillenfabrieken"):
             out[uid] = (str(name), level, _last_connection(data))
         return out
 
-    async def _fetch_workers_for_companies(
-        self, company_ids: list[str]
-    ) -> list[tuple[str, dict]]:
-        """Return (user_id, worker_dict) pairs for all workers across *company_ids*."""
-        if not company_ids:
-            return []
-
-        async def _get_workers(cid: str) -> list[tuple[str, dict]]:
-            try:
-                raw = await asyncio.wait_for(
-                    self._client.get(
-                        "/worker.getWorkers",
-                        params={"input": json.dumps({"companyId": cid})},
-                    ),
-                    timeout=10.0,
-                )
-                data = _unwrap(raw) if isinstance(raw, dict) else raw
-                if not isinstance(data, dict):
-                    return []
-                workers = data.get("workers") or []
-                pairs: list[tuple[str, dict]] = []
-                for w in workers:
-                    if isinstance(w, dict):
-                        uid = (
-                            w.get("userId")
-                            or w.get("user")
-                            or w.get("_id")
-                            or w.get("id")
-                            or ""
-                        )
-                        if uid:
-                            pairs.append((str(uid), w))
-                    elif isinstance(w, str) and w:
-                        pairs.append((w, {}))
-                return pairs
-            except Exception as exc:
-                logger.warning(
-                    "pillenfabrieken: getWorkers failed for %s: %s", cid, exc
-                )
-                return []
-
-        results = await asyncio.gather(*[_get_workers(cid) for cid in company_ids])
-        all_pairs: list[tuple[str, dict]] = []
-        for chunk in results:
-            all_pairs.extend(chunk)
-        return all_pairs
-
     async def _fetch_worker_skill_profiles(
         self, user_ids: list[str]
     ) -> dict[str, dict]:
@@ -324,96 +277,34 @@ class PillenfabriekenCog(CommandCogBase, name="pillenfabrieken"):
     async def _fetch_production_bonuses(
         self, companies: list[dict]
     ) -> dict[str, float]:
-        """Return {company_id → total production bonus %} using region + country APIs."""
-        if not companies or not self._client:
+        """Return {company_id → total production bonus %} from company.getProductionBonus.
+
+        Deposits, ethics and strategic-resource production bonuses are gone from
+        the game, so the per-company `total` is all there is (0 right now).
+        """
+        cids = [str(c.get("_id") or c.get("id") or "") for c in companies]
+        cids = [cid for cid in cids if cid]
+        if not cids or not self._client:
             return {}
-
-        region_cids: dict[str, list[str]] = {}
-        region_item: dict[str, str] = {}
-        for c in companies:
-            cid = str(c.get("_id") or c.get("id") or "")
-            item = c.get("itemCode") or ""
-            region = c.get("region") or c.get("regionId") or c.get("region_id") or ""
-            if isinstance(region, dict):
-                region = str(region.get("_id") or region.get("id") or "")
-            region = str(region)
-            if cid and region:
-                region_cids.setdefault(region, []).append(cid)
-                region_item[region] = item
-
-        region_info: dict[str, tuple[float, str]] = {}
-
-        async def _fetch_region(region_id: str, item_code: str) -> None:
-            try:
-                raw = await asyncio.wait_for(
-                    self._client.get(
-                        "/region.getById",
-                        params={"input": json.dumps({"regionId": region_id})},
-                    ),
-                    timeout=8.0,
-                )
-                data = _unwrap(raw)
-                if not isinstance(data, dict):
-                    return
-                deposit = data.get("deposit") or {}
-                deposit_type = deposit.get("type", "")
-                deposit_pct = float(deposit.get("bonusPercent") or 0)
-                if item_code and deposit_type != item_code:
-                    deposit_pct = 0.0
-                raw_country = data.get("country")
-                country_id = ""
-                if isinstance(raw_country, dict):
-                    country_id = str(
-                        raw_country.get("_id") or raw_country.get("id") or ""
-                    )
-                elif isinstance(raw_country, str):
-                    country_id = raw_country
-                region_info[region_id] = (deposit_pct, country_id)
-            except Exception:
-                logger.warning(
-                    "pillenfabrieken: region.getById failed for %s", region_id
-                )
-
-        await asyncio.gather(
-            *[_fetch_region(rid, region_item[rid]) for rid in region_cids]
-        )
-
-        country_bonus: dict[str, float] = {}
-        unique_countries = {cid for _, cid in region_info.values() if cid}
-
-        async def _fetch_country(country_id: str) -> None:
-            try:
-                raw = await asyncio.wait_for(
-                    self._client.get(
-                        "/country.getCountryById",
-                        params={"input": json.dumps({"countryId": country_id})},
-                    ),
-                    timeout=8.0,
-                )
-                data = _unwrap(raw)
-                if not isinstance(data, dict):
-                    return
-                rb = (data.get("rankings") or {}).get("countryProductionBonus")
-                if isinstance(rb, dict):
-                    country_bonus[country_id] = float(rb.get("value") or 0)
-                elif isinstance(rb, (int, float)):
-                    country_bonus[country_id] = float(rb)
-            except Exception:
-                logger.warning(
-                    "pillenfabrieken: country.getCountryById failed for %s", country_id
-                )
-
-        await asyncio.gather(*[_fetch_country(cid) for cid in unique_countries])
-
-        bonus_map: dict[str, float] = {}
-        for region_id, cids in region_cids.items():
-            deposit_pct, country_id = region_info.get(region_id, (0.0, ""))
-            total = deposit_pct + country_bonus.get(country_id, 0.0)
-            for cid in cids:
-                bonus_map[cid] = total
-        return bonus_map
-
-    # ── Command ───────────────────────────────────────────────────────────────
+        try:
+            results = await asyncio.wait_for(
+                self._client.batch_get(
+                    "company.getProductionBonus", [{"companyId": cid} for cid in cids]
+                ),
+                timeout=30.0,
+            )
+        except Exception as exc:
+            logger.warning("pillenfabrieken: getProductionBonus batch failed: %s", exc)
+            return {}
+        out: dict[str, float] = {}
+        for cid, raw in zip(cids, results):
+            data = _unwrap(raw) if isinstance(raw, dict) else raw
+            if isinstance(data, dict):
+                try:
+                    out[cid] = float(data.get("total") or 0)
+                except (TypeError, ValueError):
+                    pass
+        return out
 
     @commands.hybrid_command(
         name="pillenfabrieken",
@@ -516,11 +407,10 @@ class PillenfabriekenCog(CommandCogBase, name="pillenfabrieken"):
             company_by_id[cid] for cid in offender_company_ids if cid in company_by_id
         ]
 
-        # Fetch workers and production bonuses concurrently
-        worker_pairs_raw, prod_bonuses = await asyncio.gather(
-            self._fetch_workers_for_companies(offender_company_ids),
-            self._fetch_production_bonuses(offender_companies),
-        )
+        # worker.getWorkers is gone (the job market was replaced by hired
+        # employees), so there are no workers to list any more.
+        worker_pairs_raw: list[tuple[str, dict]] = []
+        prod_bonuses = await self._fetch_production_bonuses(offender_companies)
 
         # Deduplicate workers (keep raw emp_dict for skill fallback)
         seen_wids: set[str] = set()

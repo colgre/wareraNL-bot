@@ -403,23 +403,6 @@ def _unwrap(resp: object) -> object:
     return resp
 
 
-def _unwrap_region_list(resp: object) -> list[dict]:
-    """Unwrap an API response that should contain a list of region dicts."""
-    if isinstance(resp, list):
-        return [r for r in resp if isinstance(r, dict)]
-    if isinstance(resp, dict):
-        result = resp.get("result")
-        if isinstance(result, dict):
-            data = result.get("data")
-            if isinstance(data, list):
-                return [r for r in data if isinstance(r, dict)]
-        for key in ("data", "items", "regions", "result"):
-            v = resp.get(key)
-            if isinstance(v, list):
-                return [r for r in v if isinstance(r, dict)]
-    return []
-
-
 # ---------------------------------------------------------------------------
 # Cog
 # ---------------------------------------------------------------------------
@@ -555,148 +538,40 @@ class EcoBuildCog(CommandCogBase, name="ecobuild"):
         return ids
 
     async def _get_ae_bonuses(self, companies: list[dict]) -> dict[str, float]:
-        """Return {company _id → total production bonus %} via region + country APIs.
+        """Return {company _id → total production bonus %} from company.getProductionBonus.
 
-        Strategy (mirrors bedrijfswinst.py for accuracy):
-        1. region.getById → deposit bonus (filtered by item type) + countryId.
-        2. company.getRecommendedRegionIdsByItemCode → strategicBonus +
-           ethicSpecializationBonus for the company's exact region (primary).
-        3. Fallback: country.getCountryById →
-           strategicResources.bonuses.productionPercent (SR)
-           + max(0, countryProductionBonus.value − SR)  (ethics).
-
-        Note: rankings.countryProductionBonus alone is always 0 in practice;
-        the ethics bonus must be derived via the recommended-region list or
-        inferred from the SR/total split in the country data.
+        Deposits, ethics and the old strategic-resource production bonus no
+        longer exist (v0.27 and the Nov-2026 strategic resources rework), so the
+        game's own per-company `total` is the only source left — it is 0 on
+        every company at the moment.
         """
         if not self._client or self._client.is_available is False:
             return {}
-        region_cids: dict[str, list[str]] = {}
-        region_item: dict[str, str] = {}
-        for c in companies:
-            cid = str(c.get("_id") or c.get("id") or "")
-            item = c.get("itemCode") or ""
-            region = c.get("region") or c.get("regionId") or c.get("region_id") or ""
-            if isinstance(region, dict):
-                region = str(region.get("_id") or region.get("id") or "")
-            region = str(region)
-            if cid and region:
-                region_cids.setdefault(region, []).append(cid)
-                region_item[region] = item
-
+        cids = [
+            str(c.get("_id") or c.get("id") or "")
+            for c in companies
+            if c.get("_id") or c.get("id")
+        ]
+        if not cids:
+            return {}
+        try:
+            results = await asyncio.wait_for(
+                self._client.batch_get(
+                    "company.getProductionBonus", [{"companyId": cid} for cid in cids]
+                ),
+                timeout=30.0,
+            )
+        except Exception as exc:
+            logger.warning("ecobuild: getProductionBonus batch failed: %s", exc)
+            return {}
         bonus_map: dict[str, float] = {}
-        # region_id → (deposit_pct, country_id)
-        region_info: dict[str, tuple[float, str]] = {}
-
-        async def _fetch_region_info(region_id: str, item_code: str) -> None:
-            try:
-                raw = await self._client.get(  # type: ignore[union-attr]
-                    "/region.getById",
-                    params={"input": json.dumps({"regionId": region_id})},
-                )
-                data = _unwrap(raw)
-                if not isinstance(data, dict):
-                    return
-                deposit = data.get("deposit") or {}
-                deposit_type = deposit.get("type", "")
-                deposit_pct = float(deposit.get("bonusPercent") or 0)
-                if deposit_type and item_code and deposit_type != item_code:
-                    deposit_pct = 0.0
-                raw_country = data.get("country")
-                country_id = ""
-                if isinstance(raw_country, dict):
-                    country_id = str(raw_country.get("_id") or raw_country.get("id") or "")
-                elif isinstance(raw_country, str):
-                    country_id = raw_country
-                region_info[region_id] = (deposit_pct, country_id)
-            except Exception:
-                logger.warning("ecobuild: region.getById failed for %s", region_id)
-
-        await asyncio.gather(*[
-            _fetch_region_info(rid, region_item[rid])
-            for rid in region_cids
-        ])
-
-        # For each unique (item_code, region_id) try the recommended-region list
-        # to get the authoritative bonus breakdown (mirrors bedrijfswinst.py).
-        # depositBonus + ethicDepositBonus from this list supersede region.getById
-        # because it knows whether the deposit is active/deactivated by ethics.
-        # region_id → (sr_pct, ethics_pct, found, deposit_rec)
-        region_bonus: dict[str, tuple[float, float, bool, float]] = {}
-
-        async def _fetch_recommended(region_id: str, item_code: str) -> None:
-            if not item_code:
-                region_bonus[region_id] = (0.0, 0.0, False, 0.0)
-                return
-            try:
-                raw = await self._client.get(  # type: ignore[union-attr]
-                    "/company.getRecommendedRegionIdsByItemCode",
-                    params={"input": json.dumps({"itemCode": item_code, "count": 100})},
-                )
-                for entry in (_unwrap_region_list(raw)):
-                    if entry.get("regionId") == region_id:
-                        sr = float(entry.get("strategicBonus") or 0)
-                        ethics = float(entry.get("ethicSpecializationBonus") or 0)
-                        deposit_rec = (
-                            float(entry.get("depositBonus") or 0)
-                            + float(entry.get("ethicDepositBonus") or 0)
-                        )
-                        region_bonus[region_id] = (sr, ethics, True, deposit_rec)
-                        return
-            except Exception:
-                pass
-            region_bonus[region_id] = (0.0, 0.0, False, 0.0)
-
-        await asyncio.gather(*[
-            _fetch_recommended(rid, region_item[rid])
-            for rid in region_cids
-        ])
-
-        # Fallback: country.getCountryById for regions not found in recommended list
-        country_bonus: dict[str, tuple[float, float]] = {}  # country_id → (sr_pct, ethics_pct)
-        missing_country_ids = {
-            country_id
-            for rid, (_, country_id) in region_info.items()
-            if country_id and not region_bonus.get(rid, (0, 0, False, 0.0))[2]
-        }
-
-        async def _fetch_country(country_id: str) -> None:
-            try:
-                raw = await self._client.get(  # type: ignore[union-attr]
-                    "/country.getCountryById",
-                    params={"input": json.dumps({"countryId": country_id})},
-                )
-                data = _unwrap(raw)
-                if not isinstance(data, dict):
-                    return
-                sr_pct = float(
-                    ((data.get("strategicResources") or {}).get("bonuses") or {}).get(
-                        "productionPercent", 0
-                    ) or 0
-                )
-                rb = (data.get("rankings") or {}).get("countryProductionBonus")
-                total = float(rb.get("value") or 0) if isinstance(rb, dict) else 0.0
-                ethics_pct = max(0.0, total - sr_pct)
-                country_bonus[country_id] = (sr_pct, ethics_pct)
-            except Exception:
-                logger.warning("ecobuild: country.getCountryById failed for %s", country_id)
-
-        await asyncio.gather(*[_fetch_country(cid) for cid in missing_country_ids])
-
-        # Combine per region
-        for region_id, cids in region_cids.items():
-            deposit_pct, country_id = region_info.get(region_id, (0.0, ""))
-            sr_pct, ethics_pct, found, deposit_rec = region_bonus.get(region_id, (0.0, 0.0, False, 0.0))
-            if found:
-                # Use deposit from the recommended-regions list — it reflects whether
-                # the deposit is active or deactivated by ethics (unlike region.getById).
-                total = deposit_rec + sr_pct + ethics_pct
-            else:
-                fb_sr, fb_ethics = country_bonus.get(country_id, (0.0, 0.0))
-                total = deposit_pct + fb_sr + fb_ethics
-            for cid in cids:
-                bonus_map[cid] = total
-
+        for cid, raw in zip(cids, results):
+            data = _unwrap(raw) if isinstance(raw, dict) else raw
+            if isinstance(data, dict):
+                try:
+                    bonus_map[cid] = float(data.get("total") or 0)
+                except (TypeError, ValueError):
+                    pass
         return bonus_map
 
     async def _get_company_details(self, company_ids: list[str]) -> list[Optional[dict]]:

@@ -950,6 +950,7 @@ CREATE TABLE IF NOT EXISTS alliance_countries (
     alliance_name TEXT NOT NULL,
     country_id    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
+    suspended     INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (alliance_id, country_id)
 );
 CREATE INDEX IF NOT EXISTS idx_alliance_countries_country ON alliance_countries(country_id);

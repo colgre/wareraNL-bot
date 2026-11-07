@@ -303,6 +303,11 @@ RANK_BONUS_TABLE: dict[int, float] = {
     120: 0.3750,
 }
 
+# The game doubled the damage bonus of every military rank (captain +20% ->
+# +40%, supreme commander +37.5% -> +75%); the table above is the old scale.
+RANK_BONUS_MULTIPLIER = 2
+RANK_BONUS_TABLE = {rank: bonus * RANK_BONUS_MULTIPLIER for rank, bonus in RANK_BONUS_TABLE.items()}
+
 _MAX_RANK_LEVEL = max(RANK_BONUS_TABLE)
 
 

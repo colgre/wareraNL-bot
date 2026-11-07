@@ -43,8 +43,11 @@ class CitizenCache:
         inputs = [{"userId": uid} for uid in user_ids]
         total_batches = (len(user_ids) + batch_size - 1) // batch_size
 
+        # user.getUserLite dropped its "skills" field (API change observed
+        # 2026-11); user.getUserById still returns the full per-skill
+        # breakdown, so skill_mode can be computed correctly.
         results = await self._client.batch_get(
-            "/user.getUserLite",
+            "/user.getUserById",
             inputs,
             batch_size=batch_size,
             chunk_sleep=0.15,
@@ -58,7 +61,7 @@ class CitizenCache:
         # in the bot process (every cog/task).  Do NOT wrap this loop in an
         # explicit BEGIN/COMMIT transaction: each `await` below yields control
         # back to the event loop, letting unrelated tasks (the WAL checkpoint
-        # loop, event_poll, ethics_watcher, ...) submit their own statements on
+        # loop, event_poll, ...) submit their own statements on
         # this same connection in between — those interleave *inside* the open
         # transaction, and anything that touches transaction state (a
         # checkpoint, another COMMIT) can leave it invalid before we reach our
@@ -109,7 +112,7 @@ class CitizenCache:
                 pill_tracking_rows.append((uid, country_id, _exp_ts, updated_at))
 
                 # Combat state (health/hunger) for /damage-projection — same
-                # getUserLite response, just persisting two fields that were
+                # getUserById response, just persisting two fields that were
                 # previously read and discarded.
                 health_cur, health_max, hunger_cur, hunger_max = self._extract_combat_state(obj)
                 if health_cur is not None or hunger_cur is not None:
@@ -148,7 +151,7 @@ class CitizenCache:
         return recorded
 
     async def refresh_specific_users(self, user_ids: list[str]) -> int:
-        """Fetch and persist an explicit list of user IDs via getUserLite.
+        """Fetch and persist an explicit list of user IDs via getUserById.
 
         Exists for citizens who fall out of :meth:`refresh_country`'s per-country
         sweep entirely: ``user.getUsersByCountry`` was confirmed live to omit
@@ -178,8 +181,10 @@ class CitizenCache:
 
         updated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         inputs = [{"userId": uid} for uid in user_ids]
+        # See refresh_country: getUserLite no longer returns "skills", so
+        # skill_mode needs the full-profile endpoint here too.
         results = await self._client.batch_get(
-            "/user.getUserLite", inputs, batch_size=100, chunk_sleep=0.15,
+            "/user.getUserById", inputs, batch_size=100, chunk_sleep=0.15,
         )
 
         recorded = 0
@@ -260,9 +265,15 @@ class CitizenCache:
         if not member_ids:
             return effective_name, []
 
+        # user.getUserLite dropped its "skills" field (API change observed
+        # 2026-11); user.getUserById still returns the full per-skill
+        # breakdown, so this path — which needs skill_mode — uses that
+        # endpoint instead. It's a heavier response, but MU rosters are at
+        # most a few hundred players, matching the batch sizes already used
+        # for getUserById elsewhere (wealth.py, luck.py, war_sync.py).
         inputs = [{"userId": uid} for uid in member_ids]
         results = await self._client.batch_get(
-            "/user.getUserLite", inputs, batch_size=100
+            "/user.getUserById", inputs, batch_size=100
         )
 
         now = datetime.now(timezone.utc)

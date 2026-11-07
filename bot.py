@@ -285,13 +285,11 @@ class DiscordBot(commands.Bot):
 
         _cog_labels: dict[str, str] = {
             "poller": "📊 Statistieken & Polls",
-            "production_tasks": "📊 Statistieken & Polls",
             "citizen_tasks": "📊 Statistieken & Polls",
             "event_tasks": "📊 Statistieken & Polls",
             "luck_tasks": "📊 Statistieken & Polls",
             "resistance": "📊 Statistieken & Polls",
             "service_coordinator": "📊 Statistieken & Polls",
-            "bonus": "📊 Statistieken & Polls",
             "paraatheid": "📊 Statistieken & Polls",
             "niveauverdeling": "📊 Statistieken & Polls",
             "peil": "📊 Statistieken & Polls",

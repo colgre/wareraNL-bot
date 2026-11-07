@@ -41,25 +41,26 @@ class DamageProjectionMixin:
     # ── alliance -> country map ──────────────────────────────────────────────
 
     async def save_alliance_countries(
-        self, rows: Iterable[tuple[str, str, str]], updated_at: str
+        self, rows: Iterable[tuple], updated_at: str
     ) -> int:
-        """Replace the alliance→country map with *rows* = (alliance_id, name, country_id).
+        """Replace the alliance→country map with *rows* = (alliance_id, name,
+        country_id[, suspended]); suspended defaults to False.
 
         Wiped and rewritten whole rather than upserted: membership is small
         (~130 rows) and can change (an alliance disbanding, a country leaving),
         so a stale row must not survive past the sweep that no longer sees it.
         """
         payload = [
-            (str(aid), str(name), str(cid), updated_at)
-            for aid, name, cid in rows
-            if aid and cid
+            (str(row[0]), str(row[1]), str(row[2]), updated_at, int(bool(row[3])) if len(row) > 3 else 0)
+            for row in rows
+            if row[0] and row[2]
         ]
         await self._conn.execute("DELETE FROM alliance_countries")
         if payload:
             await self._conn.executemany(
                 "INSERT INTO alliance_countries "
-                "(alliance_id, alliance_name, country_id, updated_at) "
-                "VALUES (?, ?, ?, ?)",
+                "(alliance_id, alliance_name, country_id, updated_at, suspended) "
+                "VALUES (?, ?, ?, ?, ?)",
                 payload,
             )
         await self._conn.commit()
