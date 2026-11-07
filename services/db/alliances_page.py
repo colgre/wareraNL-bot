@@ -24,6 +24,8 @@ from typing import Optional
 
 import aiosqlite
 
+from services import strategic_resources as strategic
+
 _MIN_LEVEL_FOR_READINESS = 20
 
 
@@ -39,8 +41,12 @@ class AlliancesPageMixin:
         and not a meaningful signal of real war-readiness.
 
         Returns a list of dicts:
-            {alliance_id, alliance_name, countries: [ {
-                country_id, country_name,
+            {alliance_id, alliance_name,
+             strategic: [strategic_resources.summarize() rows for the whole
+                         alliance — every non-suspended member's copies],
+             countries: [ {
+                country_id, country_name, suspended,
+                resources: {resource: copies in its own regions},
                 population, weekly_damage, damage_per_citizen,
                 war_count, war_total, war_pct,
                 proxy_population, proxy_weekly_damage, proxy_damage_per_citizen,
@@ -48,23 +54,28 @@ class AlliancesPageMixin:
                 proxy_country_ids: [...],
             }, ... ] }
         """
-        alliance_rows: list[tuple[str, str, str]] = []
+        alliance_rows: list[tuple[str, str, str, bool]] = []
         async with self._conn.execute(
-            "SELECT alliance_id, alliance_name, country_id FROM alliance_countries"
+            "SELECT alliance_id, alliance_name, country_id, suspended FROM alliance_countries"
         ) as cur:
-            alliance_rows = [tuple(r) async for r in cur]
+            alliance_rows = [(r[0], r[1], r[2], bool(r[3])) async for r in cur]
 
         country_stats: dict[str, dict] = {}
         async with self._conn.execute(
             "SELECT country_id, name, raw_json FROM country_snapshots"
         ) as cur:
             async for country_id, name, raw_json in cur:
-                stats = {"name": name, "population": None, "weekly_damage": None, "damage_per_citizen": None}
+                stats = {
+                    "name": name, "population": None, "weekly_damage": None, "damage_per_citizen": None,
+                    "resources": {},
+                }
                 if raw_json:
                     try:
-                        rankings = (json.loads(raw_json) or {}).get("rankings") or {}
+                        raw = json.loads(raw_json) or {}
                     except (ValueError, TypeError):
-                        rankings = {}
+                        raw = {}
+                    rankings = raw.get("rankings") or {}
+                    stats["resources"] = strategic.copies_from_country(raw.get("strategicResources"))
                     stats["population"] = (rankings.get("countryActivePopulation") or {}).get("value")
                     stats["weekly_damage"] = (rankings.get("weeklyCountryDamages") or {}).get("value")
                     stats["damage_per_citizen"] = (rankings.get("weeklyCountryDamagesPerCitizen") or {}).get("value")
@@ -92,7 +103,7 @@ class AlliancesPageMixin:
             async for proxy_id, origin_id in cur:
                 proxies_by_origin.setdefault(str(origin_id), []).append(str(proxy_id))
 
-        def _country_row(country_id: str) -> dict:
+        def _country_row(country_id: str, suspended: bool = False) -> dict:
             stats = country_stats.get(country_id, {})
             war_count, war_total = readiness.get(country_id, (0, 0))
 
@@ -122,6 +133,8 @@ class AlliancesPageMixin:
             return {
                 "country_id": country_id,
                 "country_name": stats.get("name") or country_id,
+                "suspended": suspended,
+                "resources": stats.get("resources") or {},
                 "population": population,
                 "weekly_damage": weekly_damage,
                 "damage_per_citizen": stats.get("damage_per_citizen"),
@@ -152,19 +165,24 @@ class AlliancesPageMixin:
             }
 
         grouped: dict[str, dict] = {}
-        for aid, aname, cid in alliance_rows:
+        for aid, aname, cid, suspended in alliance_rows:
             aid = str(aid)
             entry = grouped.setdefault(aid, {"alliance_id": aid, "alliance_name": aname, "countries": []})
-            entry["countries"].append(_country_row(str(cid)))
+            entry["countries"].append(_country_row(str(cid), suspended))
 
         result = list(grouped.values())
         for entry in result:
             entry["countries"].sort(key=lambda c: c["population"] or 0, reverse=True)
+            # Every member gets the whole alliance's bonus; a suspended member
+            # neither shares in it nor adds to it.
+            entry["strategic"] = strategic.summarize(strategic.sum_copies(
+                c["resources"] for c in entry["countries"] if not c["suspended"]
+            ))
         result.sort(key=lambda a: sum(c["population"] or 0 for c in a["countries"]), reverse=True)
 
         # Countries not in any alliance — always last, not folded into the
         # population-sorted ordering above like a real alliance would be.
-        in_alliance = {str(cid) for _, _, cid in alliance_rows}
+        in_alliance = {str(cid) for _, _, cid, _ in alliance_rows}
         unaffiliated_ids = sorted(set(country_stats) - in_alliance)
         if unaffiliated_ids:
             unaffiliated = [_country_row(cid) for cid in unaffiliated_ids]

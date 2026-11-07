@@ -213,6 +213,9 @@ class DatabaseBase:
             # equipment tracking).
             ("mercenary_mu_agg", "total_rarity_weighted REAL NOT NULL DEFAULT 0"),
             ("mercenary_mu_agg", "total_rarity_weight REAL NOT NULL DEFAULT 0"),
+            # alliance_countries — a suspended member no longer shares in the
+            # alliance's strategic resources (see services/strategic_resources.py).
+            ("alliance_countries", "suspended INTEGER NOT NULL DEFAULT 0"),
         ]
         # Skip columns that already exist instead of unconditionally firing
         # every ALTER TABLE and catching the "duplicate column" error: on a

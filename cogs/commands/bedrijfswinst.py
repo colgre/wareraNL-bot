@@ -36,23 +36,6 @@ def _unwrap(resp: object) -> object:
     return resp
 
 
-def _unwrap_list(resp: object) -> list[dict]:
-    """Unwrap an API response that should contain a list of dicts."""
-    if isinstance(resp, list):
-        return [r for r in resp if isinstance(r, dict)]
-    if isinstance(resp, dict):
-        result = resp.get("result")
-        if isinstance(result, dict):
-            data = result.get("data")
-            if isinstance(data, list):
-                return [r for r in data if isinstance(r, dict)]
-        for key in ("data", "items", "regions", "result"):
-            v = resp.get(key)
-            if isinstance(v, list):
-                return [r for r in v if isinstance(r, dict)]
-    return []
-
-
 def _fmt_cc(value: float) -> str:
     """Format a currency value with 3 decimal places and a CC suffix."""
     return f"{value:,.3f} CC"
@@ -389,125 +372,6 @@ class BedrijfswinstCog(CommandCogBase, name="bedrijfswinst"):
             )
             return {}, {}
 
-    async def _get_country_bonus_map(self) -> dict[str, dict[str, float]]:
-        """Return {country_id: {"sr_pct": float, "ethics_pct": float}} from getAllCountries.
-
-        getAllCountries is the only endpoint that exposes rankings.countryProductionBonus
-        (= SR + ethics combined), so ethics = total − SR can be derived here.
-        """
-        try:
-            raw = await asyncio.wait_for(
-                self._client.get("/country.getAllCountries"),
-                timeout=12.0,
-            )
-            # Response may be a plain list or wrapped
-            countries: list = []
-            if isinstance(raw, list):
-                countries = raw
-            elif isinstance(raw, dict):
-                for key in ("result", "data", "countries"):
-                    v = raw.get(key)
-                    if isinstance(v, list):
-                        countries = v
-                        break
-                if not countries:
-                    nested = raw.get("result") or {}
-                    if isinstance(nested, dict):
-                        v = nested.get("data")
-                        if isinstance(v, list):
-                            countries = v
-            result: dict[str, dict[str, float]] = {}
-            for c in countries:
-                if not isinstance(c, dict):
-                    continue
-                cid = c.get("_id") or c.get("id")
-                if not cid:
-                    continue
-                sr_bonuses = (c.get("strategicResources") or {}).get("bonuses") or {}
-                sr_pct = float(sr_bonuses.get("productionPercent") or 0)
-                rb = (c.get("rankings") or {}).get("countryProductionBonus")
-                total_pct = float(rb.get("value") or 0) if isinstance(rb, dict) else 0.0
-                ethics_pct = max(0.0, total_pct - sr_pct)
-                result[cid] = {"sr_pct": sr_pct, "ethics_pct": ethics_pct}
-            return result
-        except Exception as exc:
-            logger.warning("bedrijfswinst: getAllCountries failed: %s", exc)
-            return {}
-
-    async def _get_spec_tops(self) -> dict[str, dict]:
-        """Return {item: row} from the specialization_top DB table.
-
-        Each row contains country_id, country_name, strategic_bonus, ethic_bonus etc.
-        Used as a reliable fallback for ethics when the company's region is not in the
-        dynamic recommended top-5 (e.g. Turkey steel pushed out by deposit-boosted regions).
-        """
-        if not self._db:
-            return {}
-        try:
-            rows = await self._db.get_all_tops()
-            return {row["item"]: row for row in rows if row.get("item")}
-        except Exception as exc:
-            logger.warning("bedrijfswinst: get_all_tops failed: %s", exc)
-            return {}
-
-    async def _get_item_country_ethics(self) -> dict[tuple[str, str], float]:
-        """Return {(item, country_id): ethic_bonus} from the country_item_ethic DB table.
-
-        The production poller records ethics for every country observed in each item's
-        recommended-region list (not just the leader), giving us coverage for non-leader
-        countries that would otherwise be invisible to /bedrijfswinst.
-        """
-        if not self._db:
-            return {}
-        try:
-            rows = await self._db.get_all_country_item_ethics()
-            return {
-                (row["item"], row["country_id"]): float(row["ethic_bonus"] or 0)
-                for row in rows
-                if row.get("item") and row.get("country_id")
-            }
-        except Exception as exc:
-            logger.warning("bedrijfswinst: get_all_country_item_ethics failed: %s", exc)
-            return {}
-
-    async def _get_country_spec_map(self) -> dict[str, str]:
-        """Return {country_id: specialized_item} from country_snapshots.
-
-        Used to identify countries that specialize in a given item but whose regions
-        never appear in the recommended top-5 (so ethics can't be read directly from
-        the recommended list or the country_item_ethic table).
-        """
-        if not self._db:
-            return {}
-        try:
-            return await self._db.get_country_spec_map()
-        except Exception as exc:
-            logger.warning("bedrijfswinst: get_country_spec_map failed: %s", exc)
-            return {}
-
-    async def _get_workers_for_company(self, company_id: str) -> list[dict]:
-        """Fetch current workers for a company via worker.getWorkers."""
-        if not company_id:
-            return []
-        try:
-            raw = await asyncio.wait_for(
-                self._client.get(
-                    "/worker.getWorkers",
-                    params={"input": json.dumps({"companyId": company_id})},
-                ),
-                timeout=10.0,
-            )
-            data = _unwrap(raw)
-            if isinstance(data, dict):
-                workers = data.get("workers") or []
-                return workers if isinstance(workers, list) else []
-            return []
-        except Exception as exc:
-            logger.warning(
-                "bedrijfswinst: worker.getWorkers failed for %s: %s", company_id, exc
-            )
-            return []
-
     @staticmethod
     def _extract_eco_skill(data: dict, skill_name: str) -> float:
         """Extract the level/value of a named eco skill from a getUserLite response.
@@ -541,197 +405,6 @@ class BedrijfswinstCog(CommandCogBase, name="bedrijfswinst"):
                 if name == skill_name:
                     return _pick(entry)
         return 0.0
-
-    async def _get_production_bonus(self, company: dict, item_code: str = "") -> dict:
-        """Fetch the combined production bonus for a company from its region + country.
-
-        Deposit bonus  : region.getById → deposit.bonusPercent (when type == item_code).
-        SR + ethics    : first tries getRecommendedRegionIdsByItemCode (exact regionId match);
-                         if the company's region is not in that short list, falls back to
-                         country.getCountryById where:
-                           SR     = strategicResources.bonuses.productionPercent
-                           ethics = rankings.countryProductionBonus.value − SR  (≥ 0)
-
-        Returns {"region_pct", "country_pct", "ethics_pct", "total_mult"}.
-        """
-        region_id = (
-            company.get("region") or company.get("regionId") or company.get("region_id")
-        )
-        region_pct = 0.0
-        country_pct = 0.0
-        ethics_pct = 0.0
-        country_id: str | None = None
-
-        # ── Step 1: deposit bonus + country_id from region ──────────────────
-        if region_id and isinstance(region_id, str):
-            try:
-                raw = await asyncio.wait_for(
-                    self._client.get(
-                        "/region.getById",
-                        params={"input": json.dumps({"regionId": region_id})},
-                    ),
-                    timeout=8.0,
-                )
-                data = _unwrap(raw)
-                if isinstance(data, dict):
-                    deposit = data.get("deposit") or {}
-                    deposit_type = deposit.get("type", "")
-                    deposit_pct = float(deposit.get("bonusPercent") or 0)
-                    if item_code and deposit_type == item_code and deposit_pct:
-                        region_pct = deposit_pct
-                    raw_country = data.get("country")
-                    if isinstance(raw_country, dict):
-                        country_id = raw_country.get("_id") or raw_country.get("id")
-                    elif isinstance(raw_country, str):
-                        country_id = raw_country
-            except Exception as exc:
-                logger.warning(
-                    "bedrijfswinst: region lookup failed for %s: %s", region_id, exc
-                )
-
-        # ── Step 2: SR + ethics via recommended-region list (exact match) ───
-        found_in_recommended = False
-        recommended_entries: list[dict] = []
-        if item_code and region_id and isinstance(region_id, str):
-            try:
-                raw = await asyncio.wait_for(
-                    self._client.get(
-                        "/company.getRecommendedRegionIdsByItemCode",
-                        params={
-                            "input": json.dumps({"itemCode": item_code, "count": 100})
-                        },
-                    ),
-                    timeout=8.0,
-                )
-                region_list = _unwrap_list(raw)
-                for entry in region_list:
-                    if entry.get("regionId") == region_id:
-                        country_pct = float(entry.get("strategicBonus") or 0)
-                        ethics_pct = float(entry.get("ethicSpecializationBonus") or 0)
-                        # Use the API's authoritative effective deposit bonus.
-                        # This is 0 when the country has Fanatic Industrialist
-                        # (deposits cannot activate), even if region.getById still
-                        # shows a bonusPercent for a pre-ethic deposit.
-                        # ethicDepositBonus is the agrarian-ethics component that
-                        # amplifies active deposits — add it to region_pct.
-                        region_pct = float(entry.get("depositBonus") or 0) + float(entry.get("ethicDepositBonus") or 0)
-                        found_in_recommended = True
-                        break
-                if not found_in_recommended:
-                    # Try with the specific regionId — some API versions force-include it in the list.
-                    try:
-                        raw2 = await asyncio.wait_for(
-                            self._client.get(
-                                "/company.getRecommendedRegionIdsByItemCode",
-                                params={
-                                    "input": json.dumps(
-                                        {"itemCode": item_code, "regionId": region_id}
-                                    )
-                                },
-                            ),
-                            timeout=8.0,
-                        )
-                        region_list2 = _unwrap_list(raw2)
-                        for entry in region_list2:
-                            if entry.get("regionId") == region_id:
-                                country_pct = float(entry.get("strategicBonus") or 0)
-                                ethics_pct = float(
-                                    entry.get("ethicSpecializationBonus") or 0
-                                )
-                                region_pct = float(entry.get("depositBonus") or 0) + float(entry.get("ethicDepositBonus") or 0)
-                                found_in_recommended = True
-                                break
-                        # Merge extra entries into recommended_entries for SR-matching
-                        seen = {e.get("regionId") for e in region_list}
-                        region_list.extend(
-                            e for e in region_list2 if e.get("regionId") not in seen
-                        )
-                    except Exception:
-                        pass
-
-                    # Third variant: countryId param — may return all regions of this country
-                    if not found_in_recommended and country_id:
-                        try:
-                            raw3 = await asyncio.wait_for(
-                                self._client.get(
-                                    "/company.getRecommendedRegionIdsByItemCode",
-                                    params={
-                                        "input": json.dumps(
-                                            {
-                                                "itemCode": item_code,
-                                                "countryId": country_id,
-                                            }
-                                        )
-                                    },
-                                ),
-                                timeout=8.0,
-                            )
-                            region_list3 = _unwrap_list(raw3)
-                            for entry in region_list3:
-                                if entry.get("regionId") == region_id:
-                                    country_pct = float(
-                                        entry.get("strategicBonus") or 0
-                                    )
-                                    ethics_pct = float(
-                                        entry.get("ethicSpecializationBonus") or 0
-                                    )
-                                    region_pct = float(entry.get("depositBonus") or 0) + float(entry.get("ethicDepositBonus") or 0)
-                                    found_in_recommended = True
-                                    break
-                            seen2 = {e.get("regionId") for e in region_list}
-                            region_list.extend(
-                                e
-                                for e in region_list3
-                                if e.get("regionId") not in seen2
-                            )
-                        except Exception:
-                            pass
-
-                # Always save the full list so post-processing can match by SR value
-                recommended_entries = region_list
-            except Exception as exc:
-                logger.warning(
-                    "bedrijfswinst: recommended list failed for %s/%s: %s",
-                    item_code,
-                    region_id,
-                    exc,
-                )
-
-        # ── Step 3: fallback — country.getCountryById for SR + ethics ───────
-        if not found_in_recommended and country_id and isinstance(country_id, str):
-            try:
-                raw = await asyncio.wait_for(
-                    self._client.get(
-                        "/country.getCountryById",
-                        params={"input": json.dumps({"countryId": country_id})},
-                    ),
-                    timeout=8.0,
-                )
-                data = _unwrap(raw)
-                if isinstance(data, dict):
-                    sr_bonuses = (data.get("strategicResources") or {}).get(
-                        "bonuses"
-                    ) or {}
-                    country_pct = float(sr_bonuses.get("productionPercent") or 0)
-                    rb = (data.get("rankings") or {}).get("countryProductionBonus")
-                    total_country = (
-                        float(rb.get("value") or 0) if isinstance(rb, dict) else 0.0
-                    )
-                    ethics_pct = max(0.0, total_country - country_pct)
-            except Exception as exc:
-                logger.warning(
-                    "bedrijfswinst: country fallback failed for %s: %s", country_id, exc
-                )
-
-        total_pct = region_pct + country_pct + ethics_pct
-        return {
-            "region_pct": region_pct,
-            "country_pct": country_pct,
-            "ethics_pct": ethics_pct,
-            "total_mult": 1.0 + total_pct / 100.0,
-            "country_id": country_id,
-            "_recommended_entries": recommended_entries,
-        }
 
     async def _get_company_production_bonuses(
         self, company_ids: list[str]
@@ -845,36 +518,18 @@ class BedrijfswinstCog(CommandCogBase, name="bedrijfswinst"):
 
         item_codes_needed = list({c.get("itemCode") or "" for c in companies} - {""})
 
+        # worker.getWorkers, the deposit / strategic-resource / ethics production
+        # bonus lookups and the specialization tables are gone from the game
+        # (v0.27 + the Nov-2026 strategic resources rework): the only production
+        # bonus left is company.getProductionBonus's `total`.
         (
-            workers_lists,
-            prod_bonuses_list,
             ae_prod_bonuses_map,
-            (
-                _avg_prices,
-                (prod_points, prod_needs),
-                country_bonus_map,
-                spec_top_map,
-                item_country_ethics,
-                country_spec_map,
-            ),
+            (_avg_prices, (prod_points, prod_needs)),
         ) = await asyncio.gather(
-            asyncio.gather(
-                *[self._get_workers_for_company(c.get("_id", "")) for c in companies]
-            ),
-            asyncio.gather(
-                *[
-                    self._get_production_bonus(c, c.get("itemCode") or "")
-                    for c in companies
-                ]
-            ),
             self._get_company_production_bonuses([c.get("_id", "") for c in companies]),
             asyncio.gather(
                 self._get_item_prices(),
                 self._get_production_points(),
-                self._get_country_bonus_map(),
-                self._get_spec_tops(),
-                self._get_item_country_ethics(),
-                self._get_country_spec_map(),
             ),
         )
         # Overwrite average prices with highest buy-order prices where available
@@ -898,127 +553,17 @@ class BedrijfswinstCog(CommandCogBase, name="bedrijfswinst"):
             ae_bonus_pct = ae_prod_bonuses_map.get(cid, 0.0)
             total_ae_pp_day += ae_level * 24 * (1.0 + ae_bonus_pct / 100.0)
 
-        workers_by_id: dict[str, list[dict]] = {
-            c.get("_id", ""): w for c, w in zip(companies, workers_lists)
-        }
+        # No job market any more, so no workers to list (see above).
+        workers_by_id: dict[str, list[dict]] = {}
         prod_bonus_by_id: dict[str, dict] = {
-            c.get("_id", ""): b for c, b in zip(companies, prod_bonuses_list)
+            c.get("_id", ""): {
+                "region_pct": ae_prod_bonuses_map.get(c.get("_id", ""), 0.0),
+                "country_pct": 0.0,
+                "ethics_pct": 0.0,
+                "total_mult": 1.0 + ae_prod_bonuses_map.get(c.get("_id", ""), 0.0) / 100.0,
+            }
+            for c in companies
         }
-        # Build a {item_code → {sr_pct → ethics_pct}} map from all recommended-list entries.
-        # ethicSpecializationBonus is country-level, so any region in the same country has the
-        # same value.  When the company's exact region isn't in the top-5, we can still find
-        # its ethics by matching strategicBonus (= country SR, unique per country) to an entry
-        # from the same country that happens to appear in the list.
-        sr_ethics_by_item: dict[str, dict[float, float]] = {}
-        for c, bonus in zip(companies, prod_bonuses_list):
-            item = c.get("itemCode") or ""
-            if not item:
-                continue
-            for entry in bonus.get("_recommended_entries", []):
-                sr = float(entry.get("strategicBonus") or 0)
-                eth = float(entry.get("ethicSpecializationBonus") or 0)
-                if sr > 0 and eth > 0:
-                    sr_ethics_by_item.setdefault(item, {})[sr] = eth
-
-        # Derive per-item ethics value from whichever countries ARE in the DB.
-        # e.g. lead → 30 because Nigeria appears for lead with ethics=30.
-        # All countries that pass the same ethics law for an item get the same %.
-        item_ethics_map: dict[str, float] = {}
-        for (item_k, _), eth in item_country_ethics.items():
-            if eth > item_ethics_map.get(item_k, 0.0):
-                item_ethics_map[item_k] = eth
-
-        # Post-apply SR and ethics for companies whose region wasn't in the recommended top-5.
-        for c, bonus in zip(companies, prod_bonuses_list):
-            if bonus.get("ethics_pct", 0.0) != 0.0:
-                continue  # already resolved via exact region match
-            c_id = bonus.get("country_id")
-            item = c.get("itemCode") or ""
-            country_sr = country_bonus_map.get(c_id, {}).get(
-                "sr_pct", bonus.get("country_pct", 0.0)
-            )
-            # Try SR-value match in the recommended entries for this item
-            ethics = sr_ethics_by_item.get(item, {}).get(country_sr, 0.0)
-            if ethics > 0:
-                # ethicSpecializationBonus (Industrialist) deactivates region deposits,
-                # so region_pct must be zeroed out here to avoid double-counting.
-                bonus["ethics_pct"] = ethics
-                bonus["country_pct"] = country_sr
-                bonus["region_pct"] = 0.0
-                bonus["total_mult"] = (
-                    1.0 + (country_sr + ethics) / 100.0
-                )
-            elif item and spec_top_map.get(item, {}).get("country_id") == c_id:
-                # DB fallback: specialization_top stores the permanent leader per item,
-                # so if this company's country is that leader, we have reliable ethics.
-                top_row = spec_top_map[item]
-                db_sr = float(top_row.get("strategic_bonus") or 0)
-                db_ethics = float(top_row.get("ethic_bonus") or 0)
-                # ethicSpecializationBonus (Industrialist) deactivates region deposits.
-                bonus["ethics_pct"] = db_ethics
-                bonus["country_pct"] = db_sr
-                bonus["region_pct"] = 0.0
-                bonus["total_mult"] = (
-                    1.0 + (db_sr + db_ethics) / 100.0
-                )
-            elif item and c_id and (item, c_id) in item_country_ethics:
-                # Broader DB fallback: country_item_ethic stores ethics for ALL countries
-                # observed in recommended lists (not just the leader), so non-leaders with
-                # ethics are covered too.
-                db_ethics = item_country_ethics[(item, c_id)]
-                country_sr = country_bonus_map.get(c_id, {}).get(
-                    "sr_pct", bonus.get("country_pct", 0.0)
-                )
-                # ethicSpecializationBonus (Industrialist) deactivates region deposits.
-                bonus["ethics_pct"] = db_ethics
-                bonus["country_pct"] = country_sr
-                bonus["region_pct"] = 0.0
-                bonus["total_mult"] = (
-                    1.0 + (country_sr + db_ethics) / 100.0
-                )
-            elif (
-                item
-                and c_id
-                and country_spec_map.get(c_id) == item
-                and item_ethics_map.get(item, 0.0) > 0
-            ):
-                # Country is specialized in this item but never appeared in the top-5
-                # recommended list (too low SR rank).  All countries that pass the same
-                # ethics law for an item get the same bonus %, so we infer it from the
-                # value we observed for other countries (e.g. Nigeria → lead 30%).
-                spec_ethics = item_ethics_map[item]
-                country_sr = country_bonus_map.get(c_id, {}).get(
-                    "sr_pct", bonus.get("country_pct", 0.0)
-                )
-                # ethicSpecializationBonus (Industrialist) deactivates region deposits.
-                bonus["ethics_pct"] = spec_ethics
-                bonus["country_pct"] = country_sr
-                bonus["region_pct"] = 0.0
-                bonus["total_mult"] = (
-                    1.0 + (country_sr + spec_ethics) / 100.0
-                )
-            elif c_id and c_id in country_bonus_map:
-                # SR + ethics from getAllCountries (ethics = countryProductionBonus.value - SR)
-                cmap = country_bonus_map[c_id]
-                bonus["country_pct"] = cmap["sr_pct"]
-                bonus["ethics_pct"] = cmap["ethics_pct"]
-                bonus["total_mult"] = (
-                    1.0 + (bonus["region_pct"] + cmap["sr_pct"] + cmap["ethics_pct"]) / 100.0
-                )
-
-            # Final supplement: item_country_ethics only stores ethicSpecializationBonus,
-            # so general ethics laws (e.g. agrarian ethics) won't appear there and the
-            # branches above may leave ethics_pct at 0.  countryProductionBonus.value - SR
-            # in country_bonus_map captures ALL ethics types — use it as a safety net.
-            if bonus.get("ethics_pct", 0.0) == 0.0 and c_id and c_id in country_bonus_map:
-                map_ethics = country_bonus_map[c_id].get("ethics_pct", 0.0)
-                if map_ethics > 0:
-                    c_sr = country_bonus_map[c_id]["sr_pct"]
-                    bonus["ethics_pct"] = map_ethics
-                    bonus["country_pct"] = c_sr
-                    bonus["total_mult"] = (
-                        1.0 + (bonus["region_pct"] + c_sr + map_ethics) / 100.0
-                    )
 
         all_worker_ids = list(
             {

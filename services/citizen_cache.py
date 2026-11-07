@@ -61,7 +61,7 @@ class CitizenCache:
         # in the bot process (every cog/task).  Do NOT wrap this loop in an
         # explicit BEGIN/COMMIT transaction: each `await` below yields control
         # back to the event loop, letting unrelated tasks (the WAL checkpoint
-        # loop, event_poll, ethics_watcher, ...) submit their own statements on
+        # loop, event_poll, ...) submit their own statements on
         # this same connection in between — those interleave *inside* the open
         # transaction, and anything that touches transaction state (a
         # checkpoint, another COMMIT) can leave it invalid before we reach our

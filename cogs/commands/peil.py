@@ -1,6 +1,6 @@
 """
 This module defines the PeilCog, which provides the /peil command to trigger on-demand refreshes of various cached game data subsystems in the WarEraNL bot.
-- /peil [burgers/productie/events/weerstand/alles] [land]
+- /peil [burgers/events/weerstand/alles] [land]
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ class PeilCog(CommandCogBase, name="peil"):
 
     @commands.hybrid_command(
         name="peil",
-        description="Ververs cache of peil game-data: burgers, mus, productie, events of weerstand.",
+        description="Ververs cache of peil game-data: burgers, mus, events of weerstand.",
     )
     @app_commands.describe(
         onderdeel="Wat wil je peilen?",
@@ -43,7 +43,6 @@ class PeilCog(CommandCogBase, name="peil"):
         onderdeel=[
             app_commands.Choice(name="burgers", value="burgers"),
             app_commands.Choice(name="mus", value="mus"),
-            app_commands.Choice(name="productie", value="productie"),
             app_commands.Choice(name="events", value="events"),
             app_commands.Choice(name="weerstand", value="weerstand"),
             app_commands.Choice(name="weekschade", value="weekschade"),
@@ -71,7 +70,6 @@ class PeilCog(CommandCogBase, name="peil"):
 
         • burgers   — ververs citizen-level cache (NL of opgegeven land, of alle)
         • mus       — ververs MU-lidmaatschappen voor NL
-        • productie — voer een productiepoll uit
         • events    — voer een event-poll uit (herpost meest recente per categorie)
         • weerstand — voer een verzetspeiling uit
         • alles     — voer alle peilingen uit
@@ -90,8 +88,6 @@ class PeilCog(CommandCogBase, name="peil"):
             await self._peil_burgers(ctx, land)
         if onderdeel in ("mus", "alles"):
             await self._peil_mus(ctx, land)
-        if onderdeel in ("productie", "alles"):
-            await self._peil_productie(ctx)
         if onderdeel in ("events", "alles"):
             await self._peil_events(ctx)
         if onderdeel in ("weerstand", "alles"):
@@ -270,33 +266,6 @@ class PeilCog(CommandCogBase, name="peil"):
         except Exception as exc:
             logger.exception("peil mus: sweep failed")
             await status_msg.edit(content=f"❌ MU sweep mislukt: {exc}")
-
-    # ------------------------------------------------------------------ #
-    # Productie subsystem                                                  #
-    # ------------------------------------------------------------------ #
-
-    async def _peil_productie(self, ctx: Context) -> None:
-        prod_cog = self.bot.get_cog("production_tasks")
-        if not prod_cog:
-            await ctx.send("❌ Production task cog niet geladen.", ephemeral=True)
-            return
-        status_msg = await ctx.send("🔄 Productiepoll gestart…", ephemeral=True)
-        try:
-            changes = await prod_cog.run_poll_once()
-            if changes:
-                summary = "\n".join(
-                    f"• **{item}**: {old} → {new}" for item, old, new in changes
-                )
-                await status_msg.edit(
-                    content=f"✅ Productiepoll klaar — {len(changes)} wijziging(en):\n{summary}"
-                )
-            else:
-                await status_msg.edit(
-                    content="✅ Productiepoll klaar — geen wijzigingen."
-                )
-        except Exception as exc:
-            logger.exception("peil productie: error")
-            await status_msg.edit(content=f"❌ Productiepoll mislukt: {exc}")
 
     # ------------------------------------------------------------------ #
     # Events subsystem                                                     #
