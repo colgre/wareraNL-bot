@@ -89,7 +89,12 @@ def _find_chunk_urls() -> list[str]:
         )
     manifest_resp = requests.get(APP_BASE_URL + m.group(1), timeout=15)
     manifest_resp.raise_for_status()
-    chunk_paths = sorted(set(_CHUNK_PATH_RE.findall(manifest_resp.text)))
+    # The build manifest only lists per-page chunks. The shared chunks
+    # (pages/_app, main, ...) are referenced from the homepage HTML instead and
+    # hold many procedures (league.getMyLeague, map.getMapData, ...) — scan both.
+    chunk_paths = sorted(
+        set(_CHUNK_PATH_RE.findall(manifest_resp.text)) | set(_CHUNK_PATH_RE.findall(resp.text))
+    )
     return [f"{APP_BASE_URL}/_next/{path}" for path in chunk_paths]
 
 

@@ -35,19 +35,6 @@ from cogs.tasks._base import TaskCogBase
 
 logger = logging.getLogger("discord_bot")
 
-# ── Cabinet role mirror ───────────────────────────────────────────────────────
-# production_role_id -> war_guild_role_id. Plain 1:1 role mirrors (same
-# Discord account in both guilds) — unlike Nederlander these don't drive any
-# citizenship/game-API lookup, so they're synced generically via the
-# verifier's /roles/<id> endpoint rather than a dedicated code path per role.
-_GOV_ROLE_SYNC_MAP: dict[int, int] = {
-    1401530996725383178: 1511093474051756154,  # President
-    1401531414553428139: 1511093475125235772,  # Vice-President
-    1531702814818959450: 1511093476270538752,  # Min. Defensie
-    1447956138841604179: 1511093477323182090,  # Min. Economie
-    1451180288515506258: 1511093478413697086,  # Min. Buitenlandse Zaken
-}
-
 # ── Colour mapping for game colorScheme strings ──────────────────────────────
 
 _COLOUR_MAP: dict[str, int] = {
@@ -589,10 +576,20 @@ class WarSyncCog(TaskCogBase, name="war_sync"):
     # ── Full sync ─────────────────────────────────────────────────────────────
 
     async def sync_war_guild(self) -> dict[str, int]:
-        """Sync Nederlander + MU + cabinet roles for every member in the war guild.
+        """Sync Nederlander + MU roles for every member in the war guild.
+
+        Cabinet roles (President/VP/ministers) are handled by
+        war_guild_divisions.py's _sync_government, which reads the actual
+        in-game government API — not here. An earlier version of this
+        method also mirrored cabinet roles from the production guild's
+        manually-assigned Discord roles, but that fought with the
+        API-driven sync whenever the production Discord roles were stale
+        (confirmed live: it stripped a correctly-assigned minister role
+        within seconds of the API-driven sync adding it). Removed rather
+        than kept in sync with two sources of truth.
 
         Returns a dict with counts: nederlander_added, nederlander_removed,
-        mu_roles_added, mu_roles_removed, gov_roles_added, gov_roles_removed.
+        mu_roles_added, mu_roles_removed.
         """
         war_guild = self._war_guild
         if not war_guild:
@@ -603,7 +600,6 @@ class WarSyncCog(TaskCogBase, name="war_sync"):
 
         counts = {"nederlander_added": 0, "nederlander_removed": 0,
                   "mu_roles_added": 0, "mu_roles_removed": 0,
-                  "gov_roles_added": 0, "gov_roles_removed": 0,
                   "nicknames_set": 0}
 
         # Build set of all MU Discord role IDs we manage (to identify stale ones)
@@ -613,21 +609,6 @@ class WarSyncCog(TaskCogBase, name="war_sync"):
 
         # Fetch the full set of Nederlander holders from the verifier bot (one call)
         nederlander_ids = await self._verifier_get_nederlanders()
-
-        # Fetch cabinet-role holders from the verifier bot (one call per role)
-        # and resolve the corresponding war-guild Role objects up front.
-        gov_holder_ids: dict[int, set[int]] = {}
-        gov_war_roles: dict[int, discord.Role] = {}
-        for prod_role_id, war_role_id in _GOV_ROLE_SYNC_MAP.items():
-            war_role = war_guild.get_role(war_role_id)
-            if war_role is None:
-                logger.warning(
-                    "war_sync: war-guild role %d not found, skipping gov-role sync for it",
-                    war_role_id,
-                )
-                continue
-            gov_war_roles[prod_role_id] = war_role
-            gov_holder_ids[prod_role_id] = await self._verifier_get_role_members(prod_role_id)
 
         # Build Discord-user → in_game_id lookup from identity_links
         discord_to_ingame: dict[int, str] = {}
@@ -671,22 +652,6 @@ class WarSyncCog(TaskCogBase, name="war_sync"):
                     counts["nederlander_removed"] += 1
             except discord.Forbidden:
                 logger.warning("war_sync: no permission to update Nederlander for %s", member.name)
-
-            # ── Cabinet role sync ────────────────────────────────────────
-            for prod_role_id, war_role in gov_war_roles.items():
-                should_have_gov = member.id in gov_holder_ids.get(prod_role_id, set())
-                has_gov = war_role in member.roles
-                try:
-                    if should_have_gov and not has_gov:
-                        await member.add_roles(war_role, reason="war_sync: cabinet role sync")
-                        counts["gov_roles_added"] += 1
-                    elif not should_have_gov and has_gov:
-                        await member.remove_roles(war_role, reason="war_sync: cabinet role sync")
-                        counts["gov_roles_removed"] += 1
-                except discord.Forbidden:
-                    logger.warning(
-                        "war_sync: no permission to update %s for %s", war_role.name, member.name
-                    )
 
             # ── Auto-link Nederlanders without identity link ───────────────
             if should_have_ned and member.id not in discord_to_ingame:
@@ -1421,25 +1386,6 @@ class WarSyncCog(TaskCogBase, name="war_sync"):
             logger.warning("war_sync: _verifier_get_nederlanders failed: %s", exc)
             return set()
 
-    async def _verifier_get_role_members(self, role_id: int) -> set[int]:
-        """Return the set of Discord user IDs with *role_id* on the production server."""
-        if not self._http:
-            return set()
-        try:
-            async with self._http.get(
-                f"{self._verifier_url}/roles/{role_id}", timeout=aiohttp.ClientTimeout(total=10)
-            ) as resp:
-                if resp.status != 200:
-                    logger.warning(
-                        "war_sync: verifier /roles/%d returned HTTP %d", role_id, resp.status
-                    )
-                    return set()
-                data = await resp.json()
-                return {int(i) for i in data.get("ids", [])}
-        except Exception as exc:
-            logger.warning("war_sync: _verifier_get_role_members(%d) failed: %s", role_id, exc)
-            return set()
-
     # ── DB helpers for war_mu_roles ───────────────────────────────────────────
 
     async def _get_war_mu_role(
@@ -1531,9 +1477,7 @@ class WarSyncCog(TaskCogBase, name="war_sync"):
             f"• Nederlander toegevoegd: {counts.get('nederlander_added', 0)}, "
             f"verwijderd: {counts.get('nederlander_removed', 0)}\n"
             f"• MU-rollen toegevoegd: {counts.get('mu_roles_added', 0)}, "
-            f"verwijderd: {counts.get('mu_roles_removed', 0)}\n"
-            f"• Kabinetsrollen toegevoegd: {counts.get('gov_roles_added', 0)}, "
-            f"verwijderd: {counts.get('gov_roles_removed', 0)}",
+            f"verwijderd: {counts.get('mu_roles_removed', 0)}",
             ephemeral=True,
         )
 

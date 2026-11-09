@@ -188,7 +188,27 @@ GOV_ROLE_NAMES: dict[str, str] = {
     "minister_of_defense":         "Min. Defensie",
     "minister_of_economy":         "Min. Economie",
     "minister_of_foreign_affairs": "Min. Buitenlandse Zaken",
+    "minister_of_interior":        "Min. Binnenlandse Zaken",
+    "minister_of_communication":   "Min. Communicatie",
+    "chief_of_staff":              "Stafchef",
 }
+
+# API minister-slot "title" -> GOV_ROLE_NAMES key. "advisor" is deliberately
+# absent here: unlike the other six, it isn't a single fixed slot (a country
+# can have zero or several advisors at once), so it's handled separately via
+# dynamically-named per-advisor roles (see _ensure_advisor_roles) rather than
+# one shared role.
+_MINISTER_TITLE_TO_GOV_KEY: dict[str, str] = {
+    "minOfDefense": "minister_of_defense",
+    "minOfEconomy": "minister_of_economy",
+    "minOfForeignAffairs": "minister_of_foreign_affairs",
+    "minOfInterior": "minister_of_interior",
+    "minOfCommunication": "minister_of_communication",
+    "chiefOfStaff": "chief_of_staff",
+}
+
+_DEFAULT_ADVISOR_ROLE_NAME = "Adviseur"
+_ADVISOR_ROLE_MAP_POLL_KEY = "war_advisor_role_map"
 
 # Regex to match and strip an existing [DN] prefix from a nickname
 _NICK_PREFIX_RE = re.compile(r"^\[D\d\] ")
@@ -1195,6 +1215,99 @@ class WarGuildDivisionsCog(TaskCogBase):
 
     # ── Government sync ───────────────────────────────────────────────────────
 
+    async def _ensure_advisor_roles(
+        self, guild: discord.Guild, advisors: list[tuple[str, str | None]]
+    ) -> tuple[dict[str, int], set[int]]:
+        """Assign a dynamically-named Discord role to each current advisor.
+
+        *advisors* is a list of (in_game_user_id, custom_title_or_None) for
+        every current "advisor" minister slot — unlike the other six titles
+        this isn't a single fixed seat, a country can have zero or several
+        at once, so there's no static GOV_ROLE_NAMES entry for it.
+
+        Returns (uid -> role_id for *advisors* right now, every advisor role
+        ID still tracked including orphaned ones) — the caller needs the
+        second set too, so a former advisor still loses their old role even
+        in the same cycle its role gets reused for someone else.
+
+        Advisor custom titles are the president's free-text choice and
+        change over time, so an existing role is renamed in place rather
+        than recreated, and a role freed up by someone leaving the advisor
+        slot is reused for the next new advisor instead of letting roles
+        pile up unused.
+        """
+        if not self._db:
+            return {}, set()
+
+        try:
+            raw = await self._db.get_poll_state(_ADVISOR_ROLE_MAP_POLL_KEY)
+            prev_map: dict[str, int] = {
+                k: int(v) for k, v in (json.loads(raw) if raw else {}).items()
+            }
+        except Exception:
+            prev_map = {}
+
+        current_ids = {uid for uid, _ in advisors}
+        free_role_ids: list[int] = [
+            rid for uid, rid in prev_map.items()
+            if uid not in current_ids and guild.get_role(rid) is not None
+        ]
+
+        result: dict[str, int] = {}
+        for uid, custom_title in advisors:
+            desired_name = custom_title or _DEFAULT_ADVISOR_ROLE_NAME
+            role = guild.get_role(prev_map[uid]) if uid in prev_map else None
+
+            if role is None and free_role_ids:
+                role = guild.get_role(free_role_ids.pop())
+
+            if role is None:
+                try:
+                    role = await guild.create_role(
+                        name=desired_name,
+                        mentionable=True,
+                        reason="war_guild_divisions: auto-create advisor role",
+                    )
+                    logger.info(
+                        "war_guild_divisions: created advisor role %r (id=%d) for %s",
+                        desired_name, role.id, uid,
+                    )
+                except discord.Forbidden:
+                    logger.warning(
+                        "war_guild_divisions: no permission to create advisor role for %s", uid
+                    )
+                    continue
+            elif role.name != desired_name:
+                try:
+                    await role.edit(
+                        name=desired_name, reason="war_guild_divisions: advisor title sync"
+                    )
+                except discord.Forbidden:
+                    logger.warning(
+                        "war_guild_divisions: no permission to rename advisor role %r", role.name
+                    )
+
+            result[uid] = role.id
+
+        # Persist current advisors + still-orphaned roles not repurposed this
+        # cycle, so the latter remain available for reuse next time.
+        used_role_ids = set(result.values())
+        next_map = dict(result)
+        for uid, rid in prev_map.items():
+            if (
+                uid not in current_ids
+                and rid not in used_role_ids
+                and guild.get_role(rid) is not None
+            ):
+                next_map[uid] = rid
+
+        try:
+            await self._db.set_poll_state(_ADVISOR_ROLE_MAP_POLL_KEY, json.dumps(next_map))
+        except Exception as exc:
+            logger.warning("war_guild_divisions: failed to persist advisor role map: %s", exc)
+
+        return result, set(next_map.values())
+
     async def _sync_government(self, guild: discord.Guild) -> dict:
         """Fetch the current government from the API and sync war-guild roles."""
         counts = {"gov_added": 0, "gov_removed": 0}
@@ -1222,9 +1335,15 @@ class WarGuildDivisionsCog(TaskCogBase):
             )
             return counts
 
-        # The API returns direct string user-IDs, e.g.:
-        #   {"president": "abc123", "vicePresident": "def456",
-        #    "minOfDefense": "...", "minOfEconomy": "...", "minOfForeignAffairs": "..."}
+        # President/VP are still flat string-ID fields:
+        #   {"president": "abc123", "vicePresident": "def456", "ministers": [...]}
+        # Everything else moved into "ministers" — a list of
+        # {"user": "...", "title": "minOfDefense", "customTitle": "...",
+        # "rights": [...]}. "title" is one of 7 fixed slot keys (see
+        # _MINISTER_TITLE_TO_GOV_KEY); "advisor" is a flexible N-seat slot
+        # handled separately via _ensure_advisor_roles. "customTitle" is a
+        # cosmetic display name the president can set on ANY slot, not a
+        # distinct permission — it's only used for the advisor role name.
         def _str_id(val: object) -> str | None:
             """Return val if it is a non-empty string, else None."""
             return val if isinstance(val, str) and val else None
@@ -1238,29 +1357,34 @@ class WarGuildDivisionsCog(TaskCogBase):
                 ingame_to_gov_keys.setdefault(s, set()).add(key)
 
         _add_gov(data.get("president"), "president")
-        _add_gov(
-            data.get("vicePresident") or data.get("vice_president"),
-            "vice_president",
-        )
-        _add_gov(
-            data.get("minOfDefense") or data.get("ministerOfDefense"),
-            "minister_of_defense",
-        )
-        _add_gov(
-            data.get("minOfEconomy") or data.get("ministerOfEconomy"),
-            "minister_of_economy",
-        )
-        _add_gov(
-            data.get("minOfForeignAffairs") or data.get("ministerOfForeignAffairs"),
-            "minister_of_foreign_affairs",
+        _add_gov(data.get("vicePresident"), "vice_president")
+
+        ministers = data.get("ministers")
+        advisor_entries: list[tuple[str, str | None]] = []
+        n_fixed_ministers = 0
+        if isinstance(ministers, list):
+            for entry in ministers:
+                if not isinstance(entry, dict):
+                    continue
+                uid = _str_id(entry.get("user"))
+                title = entry.get("title")
+                if not uid:
+                    continue
+                if title == "advisor":
+                    advisor_entries.append((uid, entry.get("customTitle")))
+                elif title in _MINISTER_TITLE_TO_GOV_KEY:
+                    _add_gov(uid, _MINISTER_TITLE_TO_GOV_KEY[title])
+                    n_fixed_ministers += 1
+
+        advisor_assignment, all_advisor_role_ids = await self._ensure_advisor_roles(
+            guild, advisor_entries
         )
 
         logger.info(
             "war_guild_divisions: government response — president=%s, vp=%s, "
-            "def=%s, eco=%s, fa=%s",
+            "%d fixed-slot ministers, %d advisors",
             data.get("president"), data.get("vicePresident"),
-            data.get("minOfDefense"), data.get("minOfEconomy"),
-            data.get("minOfForeignAffairs"),
+            n_fixed_ministers, len(advisor_entries),
         )
 
         # Build discord_id → in_game_id lookup
@@ -1278,11 +1402,11 @@ class WarGuildDivisionsCog(TaskCogBase):
 
         logger.info(
             "war_guild_divisions: %d government positions found, %d members have identity links",
-            sum(len(v) for v in ingame_to_gov_keys.values()),
+            sum(len(v) for v in ingame_to_gov_keys.values()) + len(advisor_assignment),
             len(discord_to_ingame),
         )
 
-        all_gov_role_ids = set(self._gov_role_ids.values())
+        all_gov_role_ids = set(self._gov_role_ids.values()) | all_advisor_role_ids
 
         for member in guild.members:
             if member.bot:
@@ -1295,6 +1419,9 @@ class WarGuildDivisionsCog(TaskCogBase):
                     rid = self._gov_role_ids.get(key)
                     if rid:
                         desired_gov_rids.add(rid)
+                advisor_rid = advisor_assignment.get(in_game_id)
+                if advisor_rid:
+                    desired_gov_rids.add(advisor_rid)
 
             current_gov_rids = {r.id for r in member.roles if r.id in all_gov_role_ids}
             to_add = desired_gov_rids - current_gov_rids
