@@ -19,7 +19,9 @@ Listens on `VERIFIER_PORT` (default `8765`). All endpoints require `Authorizatio
 | Endpoint | Response |
 |----------|----------|
 | `GET /check/{discord_id}` | `{"has_role": bool}` |
-| `GET /nederlanders` | `{"ids": ["123", ...]}` |
+| `GET /member/{discord_id}` | `{"has_role": bool, "nickname": str \| null}` |
+| `GET /nederlanders` | `{"ids": ["123", ...]}` (holders of `VERIFIER_ROLE_ID`) |
+| `GET /roles/{role_id}` | `{"ids": ["123", ...]}` (holders of any role ID, e.g. cabinet roles) |
 
 Returns `503` while the guild cache is not ready, `401` on bad/missing token.
 
