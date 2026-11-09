@@ -41,7 +41,7 @@ for API tokens, so they are not in the spec.
 | `party.getById`, `party.getManyPaginated` | The whole `ethics` block is gone. New: `congressList`, `favoriteGovType`, `primaryWinner`, `councilMembers`, `members` |
 | `company.getRecommendedRegionIdsByItemCode` | Always returns `[]` now (deposits are gone) |
 | `country.getAllCountries`, `country.getCountryById` | `taxes.selfWork` removed. New: `allianceId`, `income.development`, `dates.lastAllianceLeftAt` |
-| `managerOffer.getManyPaginated` | `citizenship` replaced by `minManagement` |
+| `managerOffer.getManyPaginated` | New optional `minManagement` (and `text`). `citizenship` still exists too (corrected 2026-11-09: checked over 1000 offers, 494 have minManagement, 84 citizenship) |
 | `user.getUserLite`, `user.getUserById` | `dates.lastHiresAt`, `dates.lastWorkOfferApplications` gone |
 | `contribution.getCountryUnrestContributions`, `contribution.getRegionContributions` | `user` is a plain id instead of `{_id, username}`; `country` added |
 | `shop.getTopGiftGivers` | `username` removed |

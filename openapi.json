@@ -3088,7 +3088,7 @@
         "tags": [
           "gameConfig"
         ],
-        "description": "Retrieves static game configuration",
+        "description": "Retrieves static game configuration New 2026-11-09 (weekly league patch): `badge.leagueWinner` (reward 0, uniqueMetadataKey `league`), more `battle.tickPoints` steps (up to 500) and `mission.rerollMissionCost` per reroll count (up to 20). The league prizes themselves are not in this config.",
         "summary": "Get game configuration",
         "operationId": "gameConfig.getGameConfig",
         "responses": {
@@ -6027,7 +6027,7 @@
         "tags": [
           "managerOffer"
         ],
-        "description": "Retrieves the paginated manager job market \u2014 companies currently looking for a manager (v0.27's new 'Managers' feature, added alongside hired employees: a manager is a player hired to run another player's company for a cut of its production). Confirmed live and reachable with our normal keys. Params are a guess by analogy with this spec's other getManyPaginated endpoints (limit/cursor) \u2014 not confirmed against a real zod error, since this procedure doesn't reject unknown or missing fields.",
+        "description": "Retrieves the paginated manager job market \u2014 companies currently looking for a manager (v0.27's new 'Managers' feature, added alongside hired employees: a manager is a player hired to run another player's company for a cut of its production). Confirmed live and reachable with our normal keys. Params are a guess by analogy with this spec's other getManyPaginated endpoints (limit/cursor) \u2014 not confirmed against a real zod error, since this procedure doesn't reject unknown or missing fields. Checked live 2026-11-09 over 1000 offers: `minManagement` is on about half of them, the older `citizenship` (country id) on about 8%, and an optional free-text `text` on a few \u2014 all optional, so an offer can carry either one or neither. (An earlier note that citizenship was replaced by minManagement was wrong.) limit is at most 50.",
         "summary": "Get manager job offers",
         "operationId": "managerOffer.getManyPaginated",
         "responses": {
@@ -6263,7 +6263,7 @@
         "tags": [
           "mu"
         ],
-        "description": "Retrieves detailed information about a specific military unit",
+        "description": "Retrieves detailed information about a specific military unit Newer fields seen live 2026-11-09: `animatedAvatarUrl`, `activeUpgradeLevels.headquarters`, `investedMoneyByUsers` (userId -> money). `mercenaryReputation` can be a decimal.",
         "summary": "Get military unit by ID",
         "operationId": "mu.getById",
         "responses": {
@@ -6528,7 +6528,7 @@
         "tags": [
           "party"
         ],
-        "description": "Retrieves detailed information about a specific political party",
+        "description": "Retrieves detailed information about a specific political party Checked live 2026-11-09: also returns `congressList`, `congressListUpdatedAt`, `congressListUpdatedBy`, `favoriteGovType`, `primaryWinner` and `treasurer` (not all in the trimmed example; some are only present once set).",
         "summary": "Get party by ID",
         "operationId": "party.getById",
         "responses": {
@@ -6585,7 +6585,7 @@
         "tags": [
           "party"
         ],
-        "description": "Retrieves a paginated list of political parties with optional filtering",
+        "description": "Retrieves a paginated list of political parties with optional filtering Checked live 2026-11-09: also returns `congressList`, `congressListUpdatedAt`, `congressListUpdatedBy`, `favoriteGovType`, `primaryWinner` and `treasurer` (not all in the trimmed example; some are only present once set).",
         "summary": "Get parties with pagination",
         "operationId": "party.getManyPaginated",
         "responses": {
@@ -9689,7 +9689,7 @@
         "tags": [
           "user"
         ],
-        "description": "Retrieves full user information by their numeric ID",
+        "description": "Retrieves full user information by their numeric ID Newer fields seen live 2026-11-09: `animatedAvatarUrl`, `equippedSkinKeys` (per slot), `infos.tournamentWonAt`, `dates.lastFiredFromGovAt`, `missions.generatedAt.weekly`, `buffs.buffCodes`/`buffEndAt`, `rankings.userGemsPurchased`, `stats.gemsPurchased`, per-skill `tournament`, `overflow` and `limited` values, and `skillsExpiration.<skill>.tournament`. Some fields only exist once set, so an example from another user may lack them.",
         "summary": "Get user by ID",
         "operationId": "user.getUserById",
         "responses": {
@@ -12382,6 +12382,1213 @@
                 "required": [
                   "employeeId"
                 ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/articleInteraction.getArticleLikers": {
+      "post": {
+        "tags": [
+          "articleInteraction"
+        ],
+        "description": "Found 2026-11-09 by scanning the game's frontend. Confirmed live and reachable with our normal keys. Lists the users who liked an article. Returns an array (empty when nobody did).",
+        "summary": "Get article likers",
+        "operationId": "articleInteraction.getArticleLikers",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": [
+                  {
+                    "userId": "697b1c3375e83770b288d1db",
+                    "createdAt": "2026-11-09T18:42:21.788Z"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "articleId": {
+                    "type": "string",
+                    "description": "The unique identifier of the article"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "articleId"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/articleInteraction.getArticleDislikers": {
+      "post": {
+        "tags": [
+          "articleInteraction"
+        ],
+        "description": "Found 2026-11-09 by scanning the game's frontend. Confirmed live and reachable with our normal keys. Lists the users who disliked an article. Returns an array (empty when nobody did).",
+        "summary": "Get article dislikers",
+        "operationId": "articleInteraction.getArticleDislikers",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": [
+                  {
+                    "userId": "697b1c3375e83770b288d1db",
+                    "createdAt": "2026-11-09T18:42:21.788Z"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "articleId": {
+                    "type": "string",
+                    "description": "The unique identifier of the article"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "articleId"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/articleInteraction.getArticleTippers": {
+      "post": {
+        "tags": [
+          "articleInteraction"
+        ],
+        "description": "Found 2026-11-09 by scanning the game's frontend. Confirmed live and reachable with our normal keys. Lists the users who tipped an article with money. Returns an array (empty when nobody did).",
+        "summary": "Get article tippers",
+        "operationId": "articleInteraction.getArticleTippers",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": [
+                  {
+                    "userId": "697b1c3375e83770b288d1db",
+                    "createdAt": "2026-11-09T18:42:21.788Z"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "articleId": {
+                    "type": "string",
+                    "description": "The unique identifier of the article"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "articleId"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/articleInteraction.getArticleGemTippers": {
+      "post": {
+        "tags": [
+          "articleInteraction"
+        ],
+        "description": "Found 2026-11-09 by scanning the game's frontend. Confirmed live and reachable with our normal keys. Lists the users who tipped an article with gems. Returns an array (empty when nobody did).",
+        "summary": "Get article gem tippers",
+        "operationId": "articleInteraction.getArticleGemTippers",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": [
+                  {
+                    "userId": "697b1c3375e83770b288d1db",
+                    "createdAt": "2026-11-09T18:42:21.788Z"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "articleId": {
+                    "type": "string",
+                    "description": "The unique identifier of the article"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "articleId"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/battle.getActiveBattlesByCountry": {
+      "post": {
+        "tags": [
+          "battle"
+        ],
+        "description": "Found 2026-11-09 by scanning the game's frontend. Confirmed live and reachable with our normal keys. Active battles a country takes part in. Returns an array of battles (empty when the country is not fighting).",
+        "summary": "Get active battles of a country",
+        "operationId": "battle.getActiveBattlesByCountry",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": []
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "countryId": {
+                    "type": "string",
+                    "description": "The unique identifier of the country"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "countryId"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/battle.getViewersCount": {
+      "post": {
+        "tags": [
+          "battle"
+        ],
+        "description": "Found 2026-11-09 by scanning the game's frontend. Confirmed live and reachable with our normal keys. Number of players currently watching a battle's page. Returns a plain number.",
+        "summary": "Get number of battle viewers",
+        "operationId": "battle.getViewersCount",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": 0
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "battleId": {
+                    "type": "string",
+                    "description": "The unique identifier of the battle"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "battleId"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mu.getReputationBuyStatus": {
+      "post": {
+        "tags": [
+          "mu"
+        ],
+        "description": "Found 2026-11-09 by scanning the game's frontend. Confirmed live and reachable with our normal keys. Whether the unit can buy reputation right now and what it costs.",
+        "summary": "Get MU reputation purchase status",
+        "operationId": "mu.getReputationBuyStatus",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": {
+                  "canBuy": false,
+                  "cost": 200,
+                  "amount": 1,
+                  "currentReputation": 6.107959660600085
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "muId": {
+                    "type": "string",
+                    "description": "The unique identifier of the military unit"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "muId"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/party.getInactiveMemberIds": {
+      "post": {
+        "tags": [
+          "party"
+        ],
+        "description": "Found 2026-11-09 by scanning the game's frontend. Confirmed live and reachable with our normal keys. IDs of party members that count as inactive. Returns an array (empty when there are none).",
+        "summary": "Get inactive party members",
+        "operationId": "party.getInactiveMemberIds",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": []
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "partyId": {
+                    "type": "string",
+                    "description": "The unique identifier of the party"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "partyId"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/manager.getByCompanyId": {
+      "post": {
+        "tags": [
+          "manager"
+        ],
+        "description": "Found 2026-11-09 by scanning the game's frontend. Confirmed live and reachable with our normal keys. The manager of a company. Returns null when the company has no manager.",
+        "summary": "Get manager of a company",
+        "operationId": "manager.getByCompanyId",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": null
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "companyId": {
+                    "type": "string",
+                    "description": "The unique identifier of the company"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "companyId"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/managerOffer.getByCompanyId": {
+      "post": {
+        "tags": [
+          "managerOffer"
+        ],
+        "description": "Found 2026-11-09 by scanning the game's frontend. Confirmed live and reachable with our normal keys. The open manager job offer of a company. Returns null when there is none.",
+        "summary": "Get manager offer of a company",
+        "operationId": "managerOffer.getByCompanyId",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": null
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "companyId": {
+                    "type": "string",
+                    "description": "The unique identifier of the company"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "companyId"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/user.getUserSkills": {
+      "post": {
+        "tags": [
+          "user"
+        ],
+        "description": "Found 2026-11-09 by scanning the game's frontend. Confirmed live and reachable with our normal keys. Only the skills block of a user (energy, health, attack, ...) \u2014 a lighter alternative to user.getUserById. Like getUserById, `level` excludes prestige; the prestige levels are in `prestige`.",
+        "summary": "Get user skills",
+        "operationId": "user.getUserSkills",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": {
+                  "_id": "69bd5616d5a5ee57bb135806",
+                  "skills": {
+                    "energy": {
+                      "level": 1,
+                      "currentBarValue": 47,
+                      "value": 110,
+                      "total": 110,
+                      "hourlyBarRegen": 11,
+                      "prestige": 0
+                    },
+                    "stamina": {
+                      "level": 0,
+                      "currentBarValue": 40,
+                      "value": 100,
+                      "total": 100,
+                      "hourlyBarRegen": 10,
+                      "prestige": 0
+                    },
+                    "health": {
+                      "level": 4,
+                      "currentBarValue": 58.50000000000023,
+                      "value": 140,
+                      "total": 140,
+                      "hourlyBarRegen": 14,
+                      "prestige": 0
+                    },
+                    "hunger": {
+                      "level": 4,
+                      "currentBarValue": 3.2,
+                      "value": 8,
+                      "total": 8,
+                      "hourlyBarRegen": 0.8,
+                      "prestige": 0
+                    },
+                    "attack": {
+                      "level": 8,
+                      "ammoPercent": 40,
+                      "buffsPercent": 60,
+                      "debuffsPercent": 0,
+                      "militaryRankPercent": 50.5,
+                      "value": 300,
+                      "weapon": 231,
+                      "overflow": 72,
+                      "total": 2033,
+                      "prestige": 0
+                    },
+                    "companies": {
+                      "level": 4,
+                      "value": 6,
+                      "total": 6,
+                      "prestige": 0
+                    },
+                    "production": {
+                      "level": 0,
+                      "currentBarValue": 10,
+                      "value": 30,
+                      "total": 33,
+                      "hourlyBarRegen": 3.3,
+                      "prestige": 0,
+                      "strategic": 3
+                    },
+                    "criticalChance": {
+                      "level": 8,
+                      "value": 50,
+                      "weapon": 45,
+                      "total": 95,
+                      "prestige": 0
+                    },
+                    "criticalDamages": {
+                      "level": 7,
+                      "value": 240,
+                      "equipment": 103,
+                      "total": 343,
+                      "prestige": 0
+                    },
+                    "armor": {
+                      "level": 4,
+                      "value": 24,
+                      "equipment": 78,
+                      "total": 120,
+                      "totalAfterSoftCap": 75,
+                      "tournament": 18,
+                      "prestige": 0
+                    },
+                    "precision": {
+                      "level": 6,
+                      "value": 80,
+                      "equipment": 33,
+                      "limited": -18,
+                      "total": 100,
+                      "prestige": 0,
+                      "strategic": 5
+                    },
+                    "dodge": {
+                      "level": 7,
+                      "value": 28,
+                      "equipment": 33,
+                      "total": 61,
+                      "totalAfterSoftCap": 60,
+                      "prestige": 0
+                    },
+                    "lootChance": {
+                      "level": 4,
+                      "value": 13,
+                      "total": 15,
+                      "prestige": 0,
+                      "strategic": 2
+                    },
+                    "management": {
+                      "level": 0,
+                      "value": 1,
+                      "total": 2,
+                      "prestige": 0,
+                      "strategic": 1
+                    }
+                  },
+                  "skillsExpiration": {
+                    "armor": {
+                      "tournament": "2026-11-15T23:55:02.930Z"
+                    },
+                    "hunger": {}
+                  },
+                  "leveling": {
+                    "level": 50,
+                    "totalXp": 89500,
+                    "dailyXpLeft": 100,
+                    "availableSkillPoints": 0,
+                    "spentSkillPoints": 200,
+                    "totalSkillPoints": 200,
+                    "freeReset": 0,
+                    "xp": 89500,
+                    "prestigeLevel": 0,
+                    "prestige": 0
+                  },
+                  "dates": {
+                    "lastSkillsResetAt": "2026-11-08T15:39:00.532Z"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "userId": {
+                    "type": "string",
+                    "description": "The unique identifier of the user"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "userId"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gameStat.getBadgeStats": {
+      "post": {
+        "tags": [
+          "gameStat"
+        ],
+        "description": "Found 2026-11-09 by scanning the game's frontend. Confirmed live and reachable with our normal keys. For each badge how many players have it and what percentage of all players that is. Its real input schema is z.void(), like gameStat.getPpMoneyValue.",
+        "summary": "Get badge statistics",
+        "operationId": "gameStat.getBadgeStats",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": {
+                  "babyBoomer": {
+                    "count": 194,
+                    "percent": 1.45
+                  },
+                  "exploitFinder": {
+                    "count": 4,
+                    "percent": 0.03
+                  },
+                  "giftPremium": {
+                    "count": 676,
+                    "percent": 5.05
+                  },
+                  "translator": {
+                    "count": 53,
+                    "percent": 0.4
+                  },
+                  "countryPresident": {
+                    "count": 974,
+                    "percent": 7.28
+                  },
+                  "alphaTester": {
+                    "count": 17,
+                    "percent": 0.13
+                  },
+                  "sugarDaddy": {
+                    "count": 21,
+                    "percent": 0.16
+                  },
+                  "battleTop1": {
+                    "count": 5078,
+                    "percent": 37.96
+                  },
+                  "hardWorker": {
+                    "count": 12137,
+                    "percent": 90.74
+                  },
+                  "coffee": {
+                    "count": 55,
+                    "percent": 0.41
+                  },
+                  "giveawayWinner": {
+                    "count": 338,
+                    "percent": 2.53
+                  },
+                  "bugFinder": {
+                    "count": 75,
+                    "percent": 0.56
+                  },
+                  "voted": {
+                    "count": 10811,
+                    "percent": 80.82
+                  },
+                  "popularArticle": {
+                    "count": 59,
+                    "percent": 0.44
+                  },
+                  "roundTerrainTop1": {
+                    "count": 7341,
+                    "percent": 54.88
+                  },
+                  "resetSurvivor": {
+                    "count": 40,
+                    "percent": 0.3
+                  },
+                  "foundingFather": {
+                    "count": 41,
+                    "percent": 0.31
+                  },
+                  "staff": {
+                    "count": 45,
+                    "percent": 0.34
+                  },
+                  "battleTerrainTop1": {
+                    "count": 6000,
+                    "percent": 44.86
+                  },
+                  "roundTop1": {
+                    "count": 6749,
+                    "percent": 50.46
+                  },
+                  "congressMember": {
+                    "count": 3659,
+                    "percent": 27.35
+                  },
+                  "countryTournamentWinner": {
+                    "count": 4862,
+                    "percent": 36.35
+                  },
+                  "prestige": {
+                    "count": 2556,
+                    "percent": 19.11
+                  },
+                  "referral": {
+                    "count": 2560,
+                    "percent": 19.14
+                  },
+                  "premium": {
+                    "count": 4523,
+                    "percent": 33.81
+                  },
+                  "vicePresident": {
+                    "count": 1658,
+                    "percent": 12.4
+                  },
+                  "muTournamentWinner": {
+                    "count": 134,
+                    "percent": 1
+                  },
+                  "govMember": {
+                    "count": 2190,
+                    "percent": 16.37
+                  }
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gameStat.getMilestoneStats": {
+      "post": {
+        "tags": [
+          "gameStat"
+        ],
+        "description": "Found 2026-11-09 by scanning the game's frontend. Confirmed live and reachable with our normal keys. For each milestone and level how many players reached it and what percentage of all players that is. Its real input schema is z.void(). Example trimmed to three milestones.",
+        "summary": "Get milestone statistics",
+        "operationId": "gameStat.getMilestoneStats",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": {
+                  "careForEmployee": {
+                    "1": {
+                      "count": 10447,
+                      "percent": 78.1
+                    },
+                    "2": {
+                      "count": 10147,
+                      "percent": 75.86
+                    },
+                    "3": {
+                      "count": 9897,
+                      "percent": 73.99
+                    },
+                    "4": {
+                      "count": 9682,
+                      "percent": 72.38
+                    },
+                    "5": {
+                      "count": 8932,
+                      "percent": 66.78
+                    },
+                    "6": {
+                      "count": 7838,
+                      "percent": 58.6
+                    }
+                  },
+                  "reachXp": {
+                    "1": {
+                      "count": 12667,
+                      "percent": 94.7
+                    },
+                    "2": {
+                      "count": 12610,
+                      "percent": 94.27
+                    },
+                    "3": {
+                      "count": 12529,
+                      "percent": 93.67
+                    },
+                    "4": {
+                      "count": 12429,
+                      "percent": 92.92
+                    },
+                    "5": {
+                      "count": 12300,
+                      "percent": 91.96
+                    },
+                    "6": {
+                      "count": 12210,
+                      "percent": 91.28
+                    },
+                    "7": {
+                      "count": 12086,
+                      "percent": 90.36
+                    },
+                    "8": {
+                      "count": 11950,
+                      "percent": 89.34
+                    },
+                    "9": {
+                      "count": 11735,
+                      "percent": 87.73
+                    },
+                    "10": {
+                      "count": 11371,
+                      "percent": 85.01
+                    },
+                    "11": {
+                      "count": 10654,
+                      "percent": 79.65
+                    },
+                    "12": {
+                      "count": 9716,
+                      "percent": 72.64
+                    },
+                    "13": {
+                      "count": 7324,
+                      "percent": 54.75
+                    },
+                    "14": {
+                      "count": 2659,
+                      "percent": 19.88
+                    },
+                    "15": {
+                      "count": 476,
+                      "percent": 3.56
+                    }
+                  },
+                  "dismantle": {
+                    "1": {
+                      "count": 11813,
+                      "percent": 88.31
+                    },
+                    "2": {
+                      "count": 11658,
+                      "percent": 87.16
+                    },
+                    "3": {
+                      "count": 11427,
+                      "percent": 85.43
+                    },
+                    "4": {
+                      "count": 11106,
+                      "percent": 83.03
+                    },
+                    "5": {
+                      "count": 10631,
+                      "percent": 79.48
+                    },
+                    "6": {
+                      "count": 9936,
+                      "percent": 74.28
+                    },
+                    "7": {
+                      "count": 9067,
+                      "percent": 67.79
+                    },
+                    "8": {
+                      "count": 7983,
+                      "percent": 59.68
+                    },
+                    "9": {
+                      "count": 6531,
+                      "percent": 48.83
+                    },
+                    "10": {
+                      "count": 4750,
+                      "percent": 35.51
+                    },
+                    "11": {
+                      "count": 3152,
+                      "percent": 23.56
+                    },
+                    "12": {
+                      "count": 1827,
+                      "percent": 13.66
+                    },
+                    "13": {
+                      "count": 915,
+                      "percent": 6.84
+                    },
+                    "14": {
+                      "count": 444,
+                      "percent": 3.32
+                    },
+                    "15": {
+                      "count": 253,
+                      "percent": 1.89
+                    },
+                    "16": {
+                      "count": 145,
+                      "percent": 1.08
+                    },
+                    "17": {
+                      "count": 74,
+                      "percent": 0.55
+                    },
+                    "18": {
+                      "count": 43,
+                      "percent": 0.32
+                    },
+                    "19": {
+                      "count": 25,
+                      "percent": 0.19
+                    },
+                    "20": {
+                      "count": 11,
+                      "percent": 0.08
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gameStat.getPpMoneyValueByItem": {
+      "post": {
+        "tags": [
+          "gameStat"
+        ],
+        "description": "Found 2026-11-09 by scanning the game's frontend. Confirmed live and reachable with our normal keys. Like gameStat.getPpMoneyValue, but per item code. Its real input schema is z.void().",
+        "summary": "Get money value per production point by item",
+        "operationId": "gameStat.getPpMoneyValueByItem",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": {
+                  "cookedFish": 0.0929,
+                  "heavyAmmo": 0.0829,
+                  "steel": 0.0869,
+                  "bread": 0.0786,
+                  "grain": 0.0749,
+                  "limestone": 0.0938,
+                  "coca": 0.0934,
+                  "concrete": 0.0888,
+                  "oil": 0.0951,
+                  "lightAmmo": 0.0986,
+                  "steak": 0.0757,
+                  "livestock": 0.0754,
+                  "cocain": 0.0903,
+                  "lead": 0.0994,
+                  "fish": 0.0939,
+                  "petroleum": 0.0931,
+                  "ammo": 0.0784,
+                  "iron": 0.09,
+                  "wood": 0.0968,
+                  "paper": 0.0918
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/user.getTodayClaimCount": {
+      "post": {
+        "tags": [
+          "user"
+        ],
+        "description": "Found 2026-11-09 by scanning the game's frontend. Confirmed live and reachable with our normal keys. How many players claimed their daily reward today. Returns a plain number. Its real input schema is z.void().",
+        "summary": "Get number of daily reward claims today",
+        "operationId": "user.getTodayClaimCount",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": 11234
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/upgrade.getMapUpgrades": {
+      "post": {
+        "tags": [
+          "upgrade"
+        ],
+        "description": "Found 2026-11-09 by scanning the game's frontend. Confirmed live and reachable with our normal keys. Every region upgrade in the game in one call (base, bunker, ...), about 1407 rows (~170 KB). Its real input schema is z.void(). Example trimmed to 3 rows.",
+        "summary": "Get all upgrades for the map",
+        "operationId": "upgrade.getMapUpgrades",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": [
+                  {
+                    "_id": "6873d1ed8793fd45e00129de",
+                    "region": "6813b7039403bc4170a5d6b7",
+                    "upgradeType": "base",
+                    "level": 2,
+                    "status": "disabled"
+                  },
+                  {
+                    "_id": "6873d1ed8793fd45e00129e0",
+                    "region": "6813b7039403bc4170a5d6a2",
+                    "upgradeType": "bunker",
+                    "level": 2,
+                    "status": "disabled"
+                  },
+                  {
+                    "_id": "6873d1ed8793fd45e00129e2",
+                    "region": "6813b7039403bc4170a5d68a",
+                    "upgradeType": "base",
+                    "level": 1,
+                    "status": "disabled"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/map.getMapData": {
+      "post": {
+        "tags": [
+          "map"
+        ],
+        "description": "Found 2026-11-09 by scanning the game's frontend. Confirmed live and reachable with our normal keys. Topology (TopoJSON) of the world map plus related map data. Very large (~2.7 MB). Its real input schema is z.void(). Example only lists the top-level keys.",
+        "summary": "Get map geometry",
+        "operationId": "map.getMapData",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": {
+                  "map": "dict",
+                  "dynamicData": "dict",
+                  "innerCountriesTopo": "dict",
+                  "overseasLinks": "dict",
+                  "updatedAt": "str"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mercenaryContractAuction.getActiveAuctions": {
+      "post": {
+        "tags": [
+          "mercenaryContractAuction"
+        ],
+        "description": "Found 2026-11-09 by scanning the game's frontend. Confirmed live and reachable with our normal keys. Mercenary contract auctions, with optional filters. This is the endpoint the game's frontend uses now (same data as getPaginatedAuctions). All filters are optional; an invalid ID answers 500 (Mongoose cast error). Input is required: send at least {}. Example trimmed to one auction.",
+        "summary": "Get mercenary contract auctions",
+        "operationId": "mercenaryContractAuction.getActiveAuctions",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "example": {
+                  "items": [
+                    {
+                      "_id": "6af2140b18586cbc8d71e5f5",
+                      "country": "6813b6d446e731854c7ac7f8",
+                      "createdBy": "699b611c77416359573f5372",
+                      "battle": "6af1b24548a62a30aebd289b",
+                      "forCountry": "6813b6d446e731854c7ac7f8",
+                      "forCountrySide": "defender",
+                      "minimumDamage": 20000000,
+                      "budget": 2400,
+                      "initialPerK": 0.12,
+                      "duration": 5,
+                      "professionalsOnly": false,
+                      "expiresAt": "2026-11-09T18:47:19.642Z",
+                      "currentPerK": 0.12,
+                      "currentPayout": 2400,
+                      "bids": [
+                        {
+                          "mu": "69bb39bbd079dc7ca5d47276",
+                          "user": "69dab6261b4838dca80b7b43",
+                          "perK": 0.12,
+                          "payout": 2400,
+                          "bidAt": "2026-11-09T18:42:31.739Z"
+                        }
+                      ],
+                      "status": "active",
+                      "createdAt": "2026-11-09T18:42:19.645Z",
+                      "updatedAt": "2026-11-09T18:42:31.739Z",
+                      "__v": 0,
+                      "currentWinner": "69bb39bbd079dc7ca5d47276",
+                      "currentWinnerUser": "69dab6261b4838dca80b7b43"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "countryId": {
+                    "type": "string",
+                    "description": "Only auctions of this country"
+                  },
+                  "battleId": {
+                    "type": "string",
+                    "description": "Only auctions for this battle"
+                  },
+                  "status": {
+                    "type": "string",
+                    "description": "Filter by auction status",
+                    "enum": [
+                      "active",
+                      "won",
+                      "expiredNoBids",
+                      "expiredBattle",
+                      "expiredRound",
+                      "cancelled"
+                    ]
+                  },
+                  "limit": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "Results per page"
+                  },
+                  "cursor": {
+                    "type": "string",
+                    "description": "Pagination cursor"
+                  }
+                },
                 "additionalProperties": false
               }
             }

@@ -210,6 +210,9 @@ class DiscordBot(commands.Bot):
                 ("resistance_state", "resistance_max REAL DEFAULT 100.0"),
                 ("citizen_luck", "rarity_json TEXT"),
                 ("division_mu_overrides", "mu_id TEXT"),
+                # Same column services/db/base.py adds: whichever process starts
+                # first stamps user_version, so both lists must carry it.
+                ("alliance_countries", "suspended INTEGER NOT NULL DEFAULT 0"),
             ]
             table_cols: dict[str, set[str]] = {}
             for table, column_def in migrations:
