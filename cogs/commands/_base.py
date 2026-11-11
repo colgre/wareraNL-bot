@@ -72,10 +72,14 @@ async def country_autocomplete(
     """Module-level autocomplete callback for country name parameters.
 
     Names come from ``country_snapshots`` — refreshed hourly by the fetcher —
-    so countries added or renamed in-game are offered immediately.  The static
-    ``ALL_COUNTRY_NAMES`` list is only a fallback for when the DB is not up
-    yet; relying on it alone silently hid newly added countries such as
-    Liechtenstein until someone edited the source.
+    so countries added or renamed in-game are usually offered immediately.
+    The static ``ALL_COUNTRY_NAMES`` list is merged in on top of that rather
+    than only used when the DB is completely empty: a DB that already has
+    most countries but hasn't picked up a brand-new one yet (confirmed live:
+    this silently hid both Liechtenstein and, later, Maldives — in the
+    Maldives case even after the static list was updated, since the old
+    all-or-nothing fallback never kicked in with 180 other countries already
+    present) would otherwise never show it until the next fetcher run.
 
     Matches English names as usual, and also Dutch names (showing them as
     "English (Dutch)" so the user can see both).
@@ -86,11 +90,16 @@ async def country_autocomplete(
     if db:
         try:
             name_map = await db.get_country_name_map()
-            names = sorted(name_map.values(), key=str.casefold)
+            names = list(name_map.values())
         except Exception:
             names = []
-    if not names:
-        names = list(ALL_COUNTRY_NAMES)
+
+    seen_lower = {n.lower() for n in names}
+    for name in ALL_COUNTRY_NAMES:
+        if name.lower() not in seen_lower:
+            names.append(name)
+            seen_lower.add(name.lower())
+    names.sort(key=str.casefold)
 
     q = current.strip().lower()
     results: list[app_commands.Choice[str]] = []
