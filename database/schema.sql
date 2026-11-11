@@ -801,6 +801,15 @@ CREATE TABLE IF NOT EXISTS citizen_name_history (
     first_seen_date TEXT NOT NULL,  -- YYYY-MM-DD
     PRIMARY KEY (user_id, name)
 );
+-- Every name change in order (also a change back to an earlier name, which the
+-- (user_id, name) key above cannot hold). Created/backfilled by para_history.
+CREATE TABLE IF NOT EXISTS citizen_name_log (
+    user_id   TEXT NOT NULL,
+    name      TEXT NOT NULL,
+    seen_date TEXT NOT NULL,  -- YYYY-MM-DD
+    PRIMARY KEY (user_id, seen_date, name)
+);
+CREATE INDEX IF NOT EXISTS idx_citizen_name_log_user ON citizen_name_log(user_id, seen_date);
 CREATE INDEX IF NOT EXISTS idx_citizen_name_history_user ON citizen_name_history(user_id);
 CREATE INDEX IF NOT EXISTS idx_citizen_name_history_name ON citizen_name_history(name COLLATE NOCASE);
 

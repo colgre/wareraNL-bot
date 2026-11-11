@@ -14,4 +14,4 @@ changes, so the next deploy re-runs the full setup exactly once (to apply
 the change) and then goes back to skipping it.
 """
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
