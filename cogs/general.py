@@ -24,6 +24,13 @@ if TYPE_CHECKING:
 
 # Configuration is provided by the bot at runtime via `bot.config`.
 
+# Categories on the production guild where the word/keyword-triggered bot
+# reactions in on_message (gifs, emoji reactions, etc.) are turned off.
+# The app.warera.io embed-suppression feature is independent of this and
+# still runs everywhere.
+_PRODUCTION_GUILD_ID = 1401530718223335496
+_REACTION_MUTED_CATEGORY_IDS = {1489316631497806027, 1469672948733575310}
+
 
 class FeedbackForm(discord.ui.Modal, title="Feedback"):
     """Modal dialog for submitting feedback to the bot owners."""
@@ -126,11 +133,20 @@ class General(commands.Cog, name="general"):
         status = await client.ping()
         await ctx.send(embed=self._api_status_embed(status))
 
+    @staticmethod
+    def _reactions_muted(message: discord.Message) -> bool:
+        """True if word/keyword-triggered reactions are off for this channel."""
+        if not message.guild or message.guild.id != _PRODUCTION_GUILD_ID:
+            return False
+        category = getattr(message.channel, "category", None)
+        return bool(category and category.id in _REACTION_MUTED_CATEGORY_IDS)
+
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
         """
-        Suppress embeds for messages that contain links to app.warera.io.
-        Requires MANAGE_MESSAGES permission for the bot in the channel.
+        Suppress embeds for messages that contain links to app.warera.io, and
+        fire word/keyword-triggered reactions (gifs, emoji) unless the
+        channel's category has those muted (see _reactions_muted).
         """
         if message.author.bot:
             return
@@ -138,6 +154,23 @@ class General(commands.Cog, name="general"):
         content = message.content or ""
         # self.bot.logger.debug(f"Received message: {content} from {message.author} "
         # f"in {getattr(message.channel, 'id', 'DM')}")
+
+        # Embed suppression runs everywhere, independent of the muted
+        # categories below — only the keyword/gif reactions are turned off.
+        if "app.warera.io" in content.lower():
+            try:
+                await message.edit(suppress=True)
+                self.bot.logger.info(
+                    f"Suppressed embeds for message {message.id} in "
+                    f"{getattr(message.channel, 'id', 'DM')}"
+                )
+            except (discord.Forbidden, discord.HTTPException) as e:
+                self.bot.logger.error(
+                    f"Failed to suppress embeds for message {message.id}: {e}"
+                )
+
+        if self._reactions_muted(message):
+            return
         if "hoezeer" in content.lower():
             self.bot.logger.info(
                 f"Hoezeer detected in message {message.id} by {message.author} in {getattr(message.channel, 'id', 'DM')}"
@@ -223,10 +256,10 @@ class General(commands.Cog, name="general"):
             except discord.HTTPException:
                 pass
 
-        # belgië / belgie → send GIF, 20% chance
+        # belgië / belgie → send GIF, 30% chance
         # Normalise accented variants (ë → e, ï → i) then check for exact word "belgie"
         _belgie_words = content.lower().replace("ë", "e").replace("ï", "i").split()
-        if "belgie" in _belgie_words and random.random() < 0.20:
+        if "belgie" in _belgie_words and random.random() < 0.30:
             try:
                 await message.channel.send("https://klipy.com/gifs/bumpy-ride-1")
             except discord.HTTPException as e:
@@ -434,19 +467,6 @@ class General(commands.Cog, name="general"):
                 await message.channel.send(gif)
             except discord.HTTPException as e:
                 self.bot.logger.error(f"Failed to send ezel gif for message {message.id}: {e}")
-
-        if "app.warera.io" not in content.lower():
-            return
-        try:
-            await message.edit(suppress=True)
-            self.bot.logger.info(
-                f"Suppressed embeds for message {message.id} in "
-                f"{getattr(message.channel, 'id', 'DM')}"
-            )
-        except (discord.Forbidden, discord.HTTPException) as e:
-            self.bot.logger.error(
-                f"Failed to suppress embeds for message {message.id}: {e}"
-            )
 
     # Message context menu command
     async def remove_spoilers(
