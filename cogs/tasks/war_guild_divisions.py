@@ -58,10 +58,16 @@ DIVISION_MU_IDS: dict[int, list[str]] = {
         "69a41cd5cedfd3ae877c2def",  # Het Noordzee-verbond
         "69a588024833b3070edb7324",  # De Krooncompagnie
         "6970dd1ebea7a2698be2e84e",  # The Flying Dutchman
-        "69a896d1214e4eeda01ba4c5",  # Kikkers Defence
+        "69a896d1214e4eeda01ba4c5",  # Korps Comeback (was: Kikkers Defence)
     ],
     3: [
-        "695acce63ae9eac7fb6e59e1",  # Korps Commando's
+        # Korps Commando's (695acce63ae9eac7fb6e59e1) removed 2026-11-13 —
+        # abandoned in-game, remaining members moved to Korps Comeback
+        # (division 2, see above). Its Discord category/channels were
+        # re-pointed to serve Korps Comeback instead of being recreated;
+        # see war_mu_roles for the category link. Do not re-add this MU
+        # here without also fixing that category link, or _ensure_mu_category
+        # will create a brand new empty category for it.
         "69843f617cf831a523014e15",  # Reg. Genietroepen
         "69eae9ed09ef4e68d6ec6e8f",  # Gild der Gulden
         "69c08ac1638466f7dba620e0",  # De Reddingsbrigade
@@ -112,10 +118,9 @@ DIVISION_MUS: dict[int, list[str]] = {
         "Het Noordzee-verbond",
         "De Krooncompagnie",
         "The Flying Dutchman",
-        "Kikkers Defence",
+        "Korps Comeback",
     ],
     3: [
-        "Korps Commando's",
         "Reg. Genietroepen",
         "Gild der Gulden",
         "De Reddingsbrigade",
