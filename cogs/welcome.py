@@ -41,14 +41,14 @@ _GOV_TITLE_DISPLAY: dict[str, str] = {
     "chiefOfStaff": "Stafchef",
 }
 
-# Verification codes are typed by hand into a game text field, so the
+# Verification codes are typed by hand into a company name field, so the
 # alphabet drops visually ambiguous characters (0/O, 1/I/L).
 _VERIFICATION_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 _VERIFICATION_CODE_TTL_SECONDS = 30 * 60
 
 
 def _generate_verification_code(length: int = 8) -> str:
-    """Generate a short random code for the in-game bio ownership check."""
+    """Generate a short random code for the in-game company-name ownership check."""
     return "".join(secrets.choice(_VERIFICATION_CODE_ALPHABET) for _ in range(length))
 
 
@@ -128,7 +128,7 @@ class WelcomeView(discord.ui.View):
 
 
 class AutoVerifyView(discord.ui.View):
-    """Persistent single-button view for the in-game bio-code ownership check.
+    """Persistent single-button view for the in-game company-name ownership check.
 
     One fixed custom_id shared by every ticket — the callback reads
     ``interaction.channel`` to find which ticket/code it belongs to, so this
@@ -141,7 +141,7 @@ class AutoVerifyView(discord.ui.View):
         super().__init__(timeout=None)
 
     @discord.ui.button(
-        label="Ik heb mijn bio aangepast ✅",
+        label="Ik heb de bedrijfsnaam aangepast ✅",
         style=discord.ButtonStyle.success,
         custom_id="autoverify_check_bio",
     )
@@ -417,11 +417,13 @@ async def _start_auto_verification(
         description = (
             "Je kan dit verzoek automatisch laten goedkeuren door te bewijzen dat "
             f"je echt de eigenaar bent van [dit WarEra-profiel]({profile_link}):\n\n"
-            "1. Ga op WarEra naar je profiel → **Profile** → **Edit**.\n"
-            "2. Zet je **Bio/beschrijving** tijdelijk op exact deze code:\n"
+            "1. Ga op WarEra naar een van jouw bedrijven (een uitgeschakeld bedrijf "
+            "mag ook) → bedrijfsinstellingen.\n"
+            "2. Verander de naam van dat bedrijf tijdelijk naar exact deze code:\n"
             f"```{code}```\n"
             "3. Klik hieronder op de knop.\n\n"
-            "Je kan je bio hierna gewoon weer terugzetten naar wat het was. "
+            "Je kan de naam hierna gewoon weer terugzetten naar wat het was. Heb je "
+            "nog geen bedrijf, maak er dan eerst een aan. "
             f"Deze code is {minutes} minuten geldig — lukt het niet, dan "
             "beoordeelt een moderator je verzoek handmatig."
         )
@@ -429,11 +431,13 @@ async def _start_auto_verification(
         description = (
             "You can get this request approved automatically by proving you "
             f"actually own [this WarEra profile]({profile_link}):\n\n"
-            "1. Go to your WarEra profile → **Profile** → **Edit**.\n"
-            "2. Temporarily set your **Bio/description** to exactly this code:\n"
+            "1. Go to one of your companies on WarEra (a disabled one works too) "
+            "→ company settings.\n"
+            "2. Temporarily rename it to exactly this code:\n"
             f"```{code}```\n"
             "3. Click the button below.\n\n"
-            "You can change your bio back afterwards. "
+            "You can rename it back afterwards. If you don't have a company yet, "
+            "create one first. "
             f"This code is valid for {minutes} minutes — if it doesn't work, "
             "a moderator will review your request manually."
         )
@@ -443,77 +447,6 @@ async def _start_auto_verification(
         color=discord.Color.blurple(),
     )
     await channel.send(embed=embed, view=AutoVerifyView())
-
-
-async def _resolve_mofa_line(client, guild, config) -> str:
-    """Build the "contact the MoFA" line for embassy tickets.
-
-    Resolved live from whoever currently holds the *Minister van Buitenlandse
-    Zaken* role, so the ticket never points at a former minister after a
-    cabinet change.  For each holder we try to include their WarEra profile
-    link, resolved in order of reliability:
-
-      1. ``identity_links`` — the mapping written when they were verified.
-      2. Their Discord display name matched against ``citizen_levels``
-         (the bot keeps nicknames in sync with in-game usernames).
-
-    Falls back to the ``users.mofa`` entry in config.json when the role has no
-    members (or is missing), so this can never end up mentioning nobody.
-    """
-    role_id = (config.get("roles") or {}).get("minister_foreign_affairs")
-    role = guild.get_role(int(role_id)) if role_id and guild else None
-    holders = [m for m in role.members if not m.bot] if role else []
-
-    role_mention = role.mention if role else "MoFA"
-
-    if not holders:
-        # Nobody currently holds the role — use the configured fallback.
-        info = (config.get("users") or {}).get("mofa") or {}
-        did, gid = info.get("discord_id"), info.get("in_game_id")
-        mention = f"<@{did}>" if did else role_mention
-        line = f"Hello, please send a message with your Discord name to our MoFA {mention} on WarEra "
-        line += "to complete your verification request."
-        if gid:
-            line += f"\nLink: https://app.warera.io/user/{gid}"
-        return line
-
-    db = None
-    try:
-        db = await _get_shared_db(client)
-    except Exception:
-        logger.warning("MoFA lookup: shared DB unavailable", exc_info=True)
-
-    async def _warera_id(member) -> str | None:
-        if not db:
-            return None
-        try:
-            link = await db.get_identity_link_by_discord(str(member.id))
-            if link and link.get("in_game_user_id"):
-                return str(link["in_game_user_id"])
-        except Exception:
-            logger.debug("MoFA lookup: identity_links failed for %s", member.id)
-        # Fall back to matching their display name against known citizens.
-        for name in filter(None, (member.nick, member.display_name, member.name)):
-            try:
-                matches = await db.search_citizen_names(name, limit=5)
-            except Exception:
-                break
-            for cname, uid in matches:
-                if cname.lower() == name.lower():
-                    return str(uid)
-        return None
-
-    mentions = " ".join(m.mention for m in holders)
-    line = (
-        f"Hello, please send a message with your Discord name to our MoFA "
-        f"{role_mention} {mentions} on WarEra to complete your verification request."
-    )
-    for member in holders:
-        gid = await _warera_id(member)
-        if gid:
-            label = member.display_name
-            line += f"\nLink ({label}): https://app.warera.io/user/{gid}"
-    return line
 
 
 async def create_verification_channel(
@@ -827,18 +760,22 @@ async def create_verification_channel(
     mention_text = " ".join(role_mentions) if role_mentions else ""
     await channel.send(content=mention_text, embed=embed)
 
-    if questionnaire_answers:
+    # Username/profile-link/country are now resolved and validated automatically
+    # (see _start_auto_verification / handle_auto_verify_click), so echoing the
+    # raw typed values back here would just be redundant. Only the free-text
+    # "Additional info" field still carries context nothing else captures —
+    # e.g. a ticket that's actually a removal request rather than a new one.
+    extra_info_answer = questionnaire_answers and (
+        questionnaire_answers.get("Additional info")
+        or questionnaire_answers.get("Aanvullende info")
+    )
+    if extra_info_answer:
         questionnaire_embed = discord.Embed(
-            title="🧾 Submitted Questionnaire" if request_type == "embassy" else "🧾 Ingevulde Vragenlijst",
+            title="🧾 Additional info" if request_type == "embassy" else "🧾 Aanvullende info",
+            description=extra_info_answer[:4096],
             color=embed_color,
             timestamp=datetime.datetime.now(datetime.UTC),
         )
-        for label, value in questionnaire_answers.items():
-            questionnaire_embed.add_field(
-                name=label,
-                value=value[:1024] if value else "-",
-                inline=False,
-            )
         await channel.send(embed=questionnaire_embed)
 
     if request_type == "citizen":
@@ -859,8 +796,10 @@ async def create_verification_channel(
             "Je kunt hier alvast meer context geven als dat nodig is."
         )
     elif request_type == "embassy":
-        instruction_text = await _resolve_mofa_line(
-            interaction.client, guild, config
+        instruction_text = (
+            "Hello! You can get this request approved automatically — see the "
+            "message below. If that doesn't work, a moderator will review your "
+            "request manually."
         )
     else:
         instruction_text = (
@@ -1056,7 +995,7 @@ class Welcome(commands.Cog, name="welcome"):
     ) -> discord.Embed:
         """Build the "welcome to NL" embed sent on citizen approval.
 
-        Shared by /approve and the automatic bio-code fast-path, so both
+        Shared by /approve and the automatic company-name fast-path, so both
         feel identical to the new citizen.
         """
         cfg_channels = self.bot.config.get("channels", {})
@@ -1201,6 +1140,58 @@ class Welcome(commands.Cog, name="welcome"):
             data = raw
         return data if isinstance(data, dict) else None
 
+    async def _fetch_user_companies(self, in_game_id: str) -> list[dict] | None:
+        """Fetch every company owned by *in_game_id*, including disabled ones.
+
+        Used for the ownership check: changing the WarEra bio is a premium
+        feature not every player has, so the automatic verification instead
+        has the player rename one of their companies (a disabled one works
+        fine) to the issued code.
+
+        Returns None on any API failure — callers treat that as "could not
+        verify right now", never raises. An owner with zero companies gets [].
+        """
+        client = self._client
+        if client is None:
+            return None
+
+        company_ids: list[str] = []
+        cursor: str | None = None
+        try:
+            while True:
+                payload: dict = {"userId": in_game_id, "perPage": 100}
+                if cursor:
+                    payload["cursor"] = cursor
+                raw = await client.get(
+                    "/company.getCompanies", params={"input": json.dumps(payload)}
+                )
+                try:
+                    data = raw["result"]["data"]
+                except (KeyError, TypeError):
+                    data = raw
+                if not isinstance(data, dict):
+                    break
+                items = data.get("items") or []
+                if not isinstance(items, list):
+                    break
+                company_ids.extend(str(i) for i in items if i)
+                cursor = data.get("nextCursor") or data.get("cursor")
+                if not cursor or not items:
+                    break
+        except Exception:
+            return None
+
+        if not company_ids:
+            return []
+
+        try:
+            results = await client.batch_get(
+                "/company.getById", [{"companyId": cid} for cid in company_ids]
+            )
+        except Exception:
+            return None
+        return [c for c in results if isinstance(c, dict)]
+
     async def _resolve_country(self, raw_name: str) -> tuple[str, str] | None:
         """Resolve a country's (id, canonical display name) from an English
         name or a known Dutch alias, case-insensitive. Returns None if it
@@ -1311,7 +1302,7 @@ class Welcome(commands.Cog, name="welcome"):
         ticket + log channel, and schedule ticket deletion.
 
         Mirrors what ``/approve`` does for citizen/belgian tickets, so the
-        automatic bio-code fast-path produces an identical end result. Does
+        automatic company-name fast-path produces an identical end result. Does
         NOT raise — returns ``{"ok": bool, "error": str | None}``.
         """
         is_nl = request_type == "citizen"
@@ -1584,13 +1575,14 @@ class Welcome(commands.Cog, name="welcome"):
         return {"ok": True, "error": None}
 
     async def handle_auto_verify_click(self, interaction: discord.Interaction) -> None:
-        """Handle a click on AutoVerifyView's "Ik heb mijn bio aangepast" button.
+        """Handle a click on AutoVerifyView's "Ik heb de bedrijfsnaam aangepast" button.
 
-        Checks the claimed WarEra account's bio against the code issued for
-        this ticket. On match: citizen/belgian tickets are approved
-        immediately (same result as /approve); embassy tickets instead post
-        a verified-identity + government-role summary with Approve/Deny
-        buttons for a moderator (see handle_embassy_decision_click).
+        Checks whether the claimed WarEra account owns a company (including
+        disabled ones) named exactly the code issued for this ticket. On
+        match: citizen/belgian tickets are approved immediately (same result
+        as /approve); embassy tickets instead post a verified-identity +
+        government-role summary with Approve/Deny buttons for a moderator
+        (see handle_embassy_decision_click).
         """
         await interaction.response.defer(ephemeral=True)
         channel = interaction.channel
@@ -1649,21 +1641,39 @@ class Welcome(commands.Cog, name="welcome"):
             await interaction.followup.send(msg, ephemeral=True)
             return
 
-        current_bio = str((user_data.get("infos") or {}).get("description") or "").strip()
-        if current_bio.lower() != str(row["code"]).strip().lower():
+        companies = await self._fetch_user_companies(in_game_id)
+        if companies is None:
+            msg = (
+                "⚠️ Kon je bedrijven niet ophalen. Probeer het zo opnieuw."
+                if is_nl else
+                "⚠️ Could not fetch your companies. Please try again shortly."
+            )
+            await interaction.followup.send(msg, ephemeral=True)
+            return
+
+        target_code = str(row["code"]).strip().lower()
+        matched = any(
+            str(c.get("name") or "").strip().lower() == target_code for c in companies
+        )
+        if not matched:
+            current_names = ", ".join(
+                f"`{c.get('name')}`" for c in companies if c.get("name")
+            )[:1500]
             if is_nl:
                 msg = (
-                    "❌ Code niet gevonden in je bio.\n"
+                    "❌ Code niet gevonden in een bedrijfsnaam.\n"
                     f"Verwachte code: `{row['code']}`\n"
-                    f"Huidige bio: `{current_bio or '(leeg)'}`\n"
-                    "Zorg dat je bio **exact** de code bevat en probeer het opnieuw."
+                    f"Jouw bedrijfsnamen: {current_names or '(geen bedrijven gevonden)'}\n"
+                    "Zorg dat de naam van één van je bedrijven (een uitgeschakeld "
+                    "bedrijf mag ook) **exact** de code is en probeer het opnieuw."
                 )
             else:
                 msg = (
-                    "❌ Code not found in your bio.\n"
+                    "❌ Code not found in any company name.\n"
                     f"Expected code: `{row['code']}`\n"
-                    f"Current bio: `{current_bio or '(empty)'}`\n"
-                    "Make sure your bio contains **exactly** the code and try again."
+                    f"Your company names: {current_names or '(no companies found)'}\n"
+                    "Make sure one of your companies (a disabled one works too) is "
+                    "named **exactly** the code and try again."
                 )
             await interaction.followup.send(msg, ephemeral=True)
             return
@@ -1752,9 +1762,9 @@ class Welcome(commands.Cog, name="welcome"):
                 member=member,
                 in_game_id=in_game_id,
                 request_type=request_type,
-                approver_label="🤖 Automatische verificatie (in-game bio-code)",
+                approver_label="🤖 Automatische verificatie (in-game bedrijfsnaam-code)",
                 approver_avatar_url=self.bot.user.display_avatar.url if self.bot.user else None,
-                reason="Automatische in-game verificatie (bio-code match)",
+                reason="Automatische in-game verificatie (bedrijfsnaam-code match)",
             )
             if result["ok"]:
                 msg = (
