@@ -101,7 +101,7 @@ class WarSyncCog(TaskCogBase, name="war_sync"):
         self.bot = bot
         self._war_cfg: dict = bot.config["war_guild"]
 
-        # Populated by daily MU scan; used by hourly sync.
+        # Populated by the hourly MU scan; used by hourly sync.
         # {in_game_user_id: {mu_id: 'owner' | 'commander' | 'member'}}
         self._user_mu_roles: dict[str, dict[str, str]] = {}
         # {mu_id: {'owner': discord_role_id, 'commander': ..., 'member': ...}}
@@ -1433,8 +1433,15 @@ class WarSyncCog(TaskCogBase, name="war_sync"):
             except Exception:
                 logger.exception("war_sync: startup MU scan failed")
 
-    @tasks.loop(hours=8)
+    @tasks.loop(hours=1)
     async def daily_mu_scan_task(self) -> None:
+        # Was hours=8: a member who switched MU mid-window kept getting their
+        # OLD MU's role handed back by every hourly_sync_task run in between,
+        # since that reads the in-memory _user_mu_roles snapshot this task
+        # refreshes (confirmed live 2026-11-13 — Korps Commandos role kept
+        # coming back for someone who'd moved to Korps Comeback hours earlier).
+        # Running this on the same hourly cadence keeps that snapshot at most
+        # ~1h stale instead of up to 8h.
         try:
             await self.scan_dutch_mus()
         except Exception:

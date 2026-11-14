@@ -491,3 +491,89 @@ class IdentityLinksMixin:
             async for row in cur:
                 counts[row[0]] = row[1]
         return counts
+
+    # ── Automatic in-game verification codes ────────────────────────────
+
+    async def upsert_pending_verification_code(
+        self,
+        channel_id: str,
+        guild_id: str,
+        discord_user_id: str,
+        request_type: str,
+        in_game_user_id: str,
+        code: str,
+        created_at: str,
+        expires_at: str,
+        country: Optional[str] = None,
+    ) -> None:
+        """Store (or replace) the active verification code for a ticket channel."""
+        await self._conn.execute(
+            "INSERT INTO pending_verification_codes ("
+            "channel_id, guild_id, discord_user_id, request_type, in_game_user_id, "
+            "code, country, attempts, created_at, expires_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?) "
+            "ON CONFLICT(channel_id) DO UPDATE SET "
+            "guild_id=excluded.guild_id, discord_user_id=excluded.discord_user_id, "
+            "request_type=excluded.request_type, in_game_user_id=excluded.in_game_user_id, "
+            "code=excluded.code, country=excluded.country, attempts=0, "
+            "created_at=excluded.created_at, expires_at=excluded.expires_at",
+            (
+                channel_id,
+                guild_id,
+                discord_user_id,
+                request_type,
+                in_game_user_id,
+                code,
+                country,
+                created_at,
+                expires_at,
+            ),
+        )
+        await self._conn.commit()
+
+    async def get_pending_verification_code(self, channel_id: str) -> Optional[dict]:
+        """Return the active verification code record for a ticket channel, if any."""
+        sql = (
+            "SELECT channel_id, guild_id, discord_user_id, request_type, in_game_user_id, "
+            "code, country, attempts, created_at, expires_at "
+            "FROM pending_verification_codes WHERE channel_id = ?"
+        )
+        async with self._conn.execute(sql, (channel_id,)) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return None
+        return {
+            "channel_id": row[0],
+            "guild_id": row[1],
+            "discord_user_id": row[2],
+            "request_type": row[3],
+            "in_game_user_id": row[4],
+            "code": row[5],
+            "country": row[6],
+            "attempts": row[7],
+            "created_at": row[8],
+            "expires_at": row[9],
+        }
+
+    async def increment_verification_attempts(self, channel_id: str) -> int:
+        """Increment and return the attempt counter for a channel's active code."""
+        await self._conn.execute(
+            "UPDATE pending_verification_codes SET attempts = attempts + 1 "
+            "WHERE channel_id = ?",
+            (channel_id,),
+        )
+        await self._conn.commit()
+        async with self._conn.execute(
+            "SELECT attempts FROM pending_verification_codes WHERE channel_id = ?",
+            (channel_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        return int(row[0]) if row else 0
+
+    async def delete_pending_verification_code(self, channel_id: str) -> None:
+        """Remove the verification code record for a channel (used up or ticket closing)."""
+        await self._conn.execute(
+            "DELETE FROM pending_verification_codes WHERE channel_id = ?",
+            (channel_id,),
+        )
+        await self._conn.commit()

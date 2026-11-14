@@ -190,6 +190,27 @@ CREATE TABLE IF NOT EXISTS ticket_log (
 );
 CREATE INDEX IF NOT EXISTS idx_ticket_log_guild_created ON ticket_log(guild_id, created_at);
 
+-- pending_verification_codes: one-time codes issued for the automatic
+--   in-game ownership check on citizen/belgian/embassy tickets (player sets
+--   their WarEra bio to this code to prove they control the claimed
+--   account). Keyed by channel_id since each ticket has at most one active
+--   code at a time, a new request in the same channel overwrites it.
+--   NOTE: avoid semicolon characters in comments here, bot.py's init_db()
+--   does a naive split on that character that silently swallows anything
+--   broken by one appearing where it shouldn't.
+CREATE TABLE IF NOT EXISTS pending_verification_codes (
+    channel_id      TEXT PRIMARY KEY,
+    guild_id        TEXT NOT NULL,
+    discord_user_id TEXT NOT NULL,
+    request_type    TEXT NOT NULL,
+    in_game_user_id TEXT NOT NULL,
+    code            TEXT NOT NULL,
+    country         TEXT,            -- claimed country, embassy tickets only
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT NOT NULL,
+    expires_at      TEXT NOT NULL
+);
+
 -- seen_articles: deduplication for posted articles
 CREATE TABLE IF NOT EXISTS seen_articles (
     article_id TEXT PRIMARY KEY,
