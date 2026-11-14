@@ -134,11 +134,21 @@ class AutoVerifyView(discord.ui.View):
     ``interaction.channel`` to find which ticket/code it belongs to, so this
     survives bot restarts as long as it's registered once via
     ``bot.add_view`` (done in Welcome.__init__), same technique as
-    WelcomeView above.
+    WelcomeView above. The custom_id is what matters for that registration;
+    the button's label is set per-instance below and only affects how this
+    particular message renders, so it's safe to localize per ticket.
+
+    ``is_nl`` picks the button's label language: Dutch only for citizen
+    tickets (same convention as the rest of the auto-verification flow),
+    English for belgian/foreigner/embassy.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, is_nl: bool = True) -> None:
         super().__init__(timeout=None)
+        self.check_button.label = (
+            "Ik heb de bedrijfsnaam aangepast ✅" if is_nl
+            else "I've changed the company name ✅"
+        )
 
     @discord.ui.button(
         label="Ik heb de bedrijfsnaam aangepast ✅",
@@ -242,14 +252,6 @@ class VerificationQuestionnaireModal(discord.ui.Modal):
             )
         )
 
-        self.warera_name = discord.ui.TextInput(
-            label="WarEra username" if is_english else "WarEra gebruikersnaam",
-            placeholder=(
-                "Enter your in-game name" if is_english else "Vul je in-game naam in"
-            ),
-            required=True,
-            max_length=64,
-        )
         self.profile_link = discord.ui.TextInput(
             label=(
                 "URL to your in-game profile or your user ID"
@@ -277,7 +279,6 @@ class VerificationQuestionnaireModal(discord.ui.Modal):
             max_length=500,
         )
 
-        self.add_item(self.warera_name)
         self.add_item(self.profile_link)
 
         self.embassy_country = None
@@ -296,20 +297,8 @@ class VerificationQuestionnaireModal(discord.ui.Modal):
         is_english = self.request_type in {"belgian", "foreigner", "embassy"}
 
         raw_profile_value = str(self.profile_link).strip().strip("<>")
-        profile_value_for_admins = raw_profile_value
-        if raw_profile_value and "://" not in raw_profile_value:
-            profile_value_for_admins = f"https://app.warera.io/user/{raw_profile_value}"
 
-        questionnaire_answers = {
-            ("WarEra username" if is_english else "WarEra gebruikersnaam"): str(
-                self.warera_name
-            ).strip(),
-            (
-                "URL to your in-game profile or your user ID"
-                if is_english
-                else "Profiel-URL of gebruikers-ID"
-            ): profile_value_for_admins,
-        }
+        questionnaire_answers: dict[str, str] = {}
         canonical_country: str | None = None
         if self.embassy_country:
             raw_country = str(self.embassy_country).strip()
@@ -323,7 +312,6 @@ class VerificationQuestionnaireModal(discord.ui.Modal):
                 )
                 return
             _country_id, canonical_country = resolved
-            questionnaire_answers["Country"] = canonical_country
 
         extra = str(self.extra_info).strip()
         if extra:
@@ -417,13 +405,12 @@ async def _start_auto_verification(
         description = (
             "Je kan dit verzoek automatisch laten goedkeuren door te bewijzen dat "
             f"je echt de eigenaar bent van [dit WarEra-profiel]({profile_link}):\n\n"
-            "1. Ga op WarEra naar een van jouw bedrijven (een uitgeschakeld bedrijf "
+            "1. Ga in WarEra naar een van jouw bedrijven (een uitgeschakeld bedrijf "
             "mag ook) → bedrijfsinstellingen.\n"
             "2. Verander de naam van dat bedrijf tijdelijk naar exact deze code:\n"
             f"```{code}```\n"
             "3. Klik hieronder op de knop.\n\n"
-            "Je kan de naam hierna gewoon weer terugzetten naar wat het was. Heb je "
-            "nog geen bedrijf, maak er dan eerst een aan. "
+            "Je kan de naam hierna gewoon weer terugzetten naar wat het was. "
             f"Deze code is {minutes} minuten geldig — lukt het niet, dan "
             "beoordeelt een moderator je verzoek handmatig."
         )
@@ -436,8 +423,7 @@ async def _start_auto_verification(
             "2. Temporarily rename it to exactly this code:\n"
             f"```{code}```\n"
             "3. Click the button below.\n\n"
-            "You can rename it back afterwards. If you don't have a company yet, "
-            "create one first. "
+            "You can rename it back afterwards. "
             f"This code is valid for {minutes} minutes — if it doesn't work, "
             "a moderator will review your request manually."
         )
@@ -446,7 +432,7 @@ async def _start_auto_verification(
         description=description,
         color=discord.Color.blurple(),
     )
-    await channel.send(embed=embed, view=AutoVerifyView())
+    await channel.send(embed=embed, view=AutoVerifyView(is_nl=request_type == "citizen"))
 
 
 async def create_verification_channel(
@@ -801,6 +787,12 @@ async def create_verification_channel(
             "message below. If that doesn't work, a moderator will review your "
             "request manually."
         )
+    elif request_type == "foreigner":
+        instruction_text = (
+            "Hello! You can get this request approved automatically — see the "
+            "message below. If that doesn't work, send a screenshot of your "
+            "WarEra profile and wait for a moderator."
+        )
     else:
         instruction_text = (
             "Hello, please send a screenshot of your WarEra profile "
@@ -818,7 +810,7 @@ async def create_verification_channel(
     # anything else goes wrong here, the ticket just stays on the existing
     # manual flow above — this is a fast-path on top of it, not a
     # replacement.
-    if request_type in {"citizen", "belgian", "embassy"} and profile_input:
+    if request_type in {"citizen", "belgian", "foreigner", "embassy"} and profile_input:
         try:
             parsed_in_game_id = Welcome.normalize_ingame_id(profile_input)
         except ValueError:
@@ -999,15 +991,12 @@ class Welcome(commands.Cog, name="welcome"):
         feel identical to the new citizen.
         """
         cfg_channels = self.bot.config.get("channels", {})
-        handleiding_ch = cfg_channels.get("handleiding")
         roles_ch = cfg_channels.get("roles_claim")
         support_ch = cfg_channels.get("vragen")
 
         parts = [f"Welkom {member.mention} in WarEra Nederland!\n\n"]
-        if handleiding_ch:
-            parts.append(f"Om je op weg te helpen, bekijk onze <#{handleiding_ch}>")
         if roles_ch:
-            parts.append(f" en claim je rollen in <#{roles_ch}>")
+            parts.append(f"Om je op weg te helpen, claim je rollen in <#{roles_ch}>")
         if support_ch:
             parts.append(f". Voor vragen kun terecht in <#{support_ch}>")
         parts.append(".\n\nHier een paar kleine tips om je op weg te helpen:\n")
@@ -1020,11 +1009,6 @@ class Welcome(commands.Cog, name="welcome"):
             (
                 "We hebben redelijk wat kanalen in deze server, via 'Browse Channels' "
                 "bovenin de kanalenlijst kan je selectief kanalen aan-/uitzetten."
-            ),
-            (
-                "In het kanaal " + (f"<#{handleiding_ch}>" if handleiding_ch else "beginner-handleiding")
-                + " staat een link naar onze wikipedia, hier kan je ook een "
-                "beginnershandleiding vinden."
             ),
             (
                 "We hebben een hele behulpzame community: kom je ergens niet uit, of "
@@ -1293,7 +1277,7 @@ class Welcome(commands.Cog, name="welcome"):
         channel: discord.TextChannel,
         member: discord.Member,
         in_game_id: str,
-        request_type: str,  # "citizen" | "belgian"
+        request_type: str,  # "citizen" | "belgian" | "foreigner"
         approver_label: str,
         approver_avatar_url: str | None,
         reason: str,
@@ -1301,12 +1285,14 @@ class Welcome(commands.Cog, name="welcome"):
         """Grant the nationality role, store the identity link, notify the
         ticket + log channel, and schedule ticket deletion.
 
-        Mirrors what ``/approve`` does for citizen/belgian tickets, so the
-        automatic company-name fast-path produces an identical end result. Does
-        NOT raise — returns ``{"ok": bool, "error": str | None}``.
+        Mirrors what ``/approve`` does for citizen/belgian/foreigner tickets,
+        so the automatic company-name fast-path produces an identical end
+        result. Does NOT raise — returns ``{"ok": bool, "error": str | None}``.
         """
         is_nl = request_type == "citizen"
-        role_key = {"citizen": "nederlander", "belgian": "belgian"}.get(request_type)
+        role_key = {
+            "citizen": "nederlander", "belgian": "belgian", "foreigner": "foreigner",
+        }.get(request_type)
         role_to_give = guild.get_role(self.config["roles"][role_key]) if role_key else None
 
         if role_to_give:
@@ -1687,57 +1673,58 @@ class Welcome(commands.Cog, name="welcome"):
 
         username = user_data.get("username") or member.display_name
 
-        if request_type in {"citizen", "belgian"}:
-            target_name = "Netherlands" if is_nl else "Belgium"
-            if is_nl:
-                target_country_id = self.config.get("nl_country_id")
-            else:
-                target_country_id = await self._resolve_country_id_by_name(target_name)
-
-            actual_country_id = user_data.get("country")
-            if not target_country_id or actual_country_id != target_country_id:
-                name_map = {}
-                try:
-                    name_map = await db.get_country_name_map()
-                except Exception:
-                    pass
-                actual_name = name_map.get(
-                    actual_country_id, actual_country_id or ("onbekend" if is_nl else "unknown")
-                )
-                await db.delete_pending_verification_code(str(channel.id))
+        if request_type in {"citizen", "belgian", "foreigner"}:
+            if request_type in {"citizen", "belgian"}:
+                target_name = "Netherlands" if is_nl else "Belgium"
                 if is_nl:
-                    mismatch_embed = discord.Embed(
-                        title="⚠️ Eigendom bevestigd, land komt niet overeen",
-                        description=(
-                            f"{member.mention} heeft bewezen **{username}** te zijn, maar dit "
-                            f"account staat geregistreerd in **{actual_name}**, niet "
-                            f"{target_name}.\n\nEen moderator moet dit handmatig beoordelen "
-                            "met `/approve`."
-                        ),
-                        color=discord.Color.orange(),
-                    )
-                    followup_msg = (
-                        "✅ Eigendom bevestigd, maar het land komt niet overeen — zie het "
-                        "bericht in het kanaal. Een moderator zal je verzoek beoordelen."
-                    )
+                    target_country_id = self.config.get("nl_country_id")
                 else:
-                    mismatch_embed = discord.Embed(
-                        title="⚠️ Ownership confirmed, country doesn't match",
-                        description=(
-                            f"{member.mention} has proven to be **{username}**, but this "
-                            f"account is registered in **{actual_name}**, not "
-                            f"{target_name}.\n\nA moderator needs to review this manually "
-                            "with `/approve`."
-                        ),
-                        color=discord.Color.orange(),
+                    target_country_id = await self._resolve_country_id_by_name(target_name)
+
+                actual_country_id = user_data.get("country")
+                if not target_country_id or actual_country_id != target_country_id:
+                    name_map = {}
+                    try:
+                        name_map = await db.get_country_name_map()
+                    except Exception:
+                        pass
+                    actual_name = name_map.get(
+                        actual_country_id, actual_country_id or ("onbekend" if is_nl else "unknown")
                     )
-                    followup_msg = (
-                        "✅ Ownership confirmed, but the country doesn't match — see the "
-                        "message in the channel. A moderator will review your request."
-                    )
-                await channel.send(embed=mismatch_embed)
-                await interaction.followup.send(followup_msg, ephemeral=True)
-                return
+                    await db.delete_pending_verification_code(str(channel.id))
+                    if is_nl:
+                        mismatch_embed = discord.Embed(
+                            title="⚠️ Eigendom bevestigd, land komt niet overeen",
+                            description=(
+                                f"{member.mention} heeft bewezen **{username}** te zijn, maar dit "
+                                f"account staat geregistreerd in **{actual_name}**, niet "
+                                f"{target_name}.\n\nEen moderator moet dit handmatig beoordelen "
+                                "met `/approve`."
+                            ),
+                            color=discord.Color.orange(),
+                        )
+                        followup_msg = (
+                            "✅ Eigendom bevestigd, maar het land komt niet overeen — zie het "
+                            "bericht in het kanaal. Een moderator zal je verzoek beoordelen."
+                        )
+                    else:
+                        mismatch_embed = discord.Embed(
+                            title="⚠️ Ownership confirmed, country doesn't match",
+                            description=(
+                                f"{member.mention} has proven to be **{username}**, but this "
+                                f"account is registered in **{actual_name}**, not "
+                                f"{target_name}.\n\nA moderator needs to review this manually "
+                                "with `/approve`."
+                            ),
+                            color=discord.Color.orange(),
+                        )
+                        followup_msg = (
+                            "✅ Ownership confirmed, but the country doesn't match — see the "
+                            "message in the channel. A moderator will review your request."
+                        )
+                    await channel.send(embed=mismatch_embed)
+                    await interaction.followup.send(followup_msg, ephemeral=True)
+                    return
 
             try:
                 await self._validate_identity_link_target(
@@ -1809,7 +1796,17 @@ class Welcome(commands.Cog, name="welcome"):
             ),
             color=discord.Color.blurple(),
         )
-        await channel.send(embed=verified_embed, view=EmbassyDecisionView())
+        # Ping the Dutch Minister of Foreign Affairs so they see this needs a
+        # decision — they're also allowed to press the buttons themselves
+        # (see handle_embassy_decision_click), not just government/president/
+        # vice-president.
+        mofa_role_id = self.config.get("roles", {}).get("minister_foreign_affairs")
+        mofa_role = guild.get_role(mofa_role_id) if mofa_role_id else None
+        await channel.send(
+            content=mofa_role.mention if mofa_role else None,
+            embed=verified_embed,
+            view=EmbassyDecisionView(),
+        )
         await interaction.followup.send(
             "✅ You're verified! A moderator will now review your request.",
             ephemeral=True,
@@ -1823,9 +1820,29 @@ class Welcome(commands.Cog, name="welcome"):
         channel = interaction.channel
         guild = interaction.guild
 
+        db = await self._get_approval_db()
+        row = await db.get_pending_verification_code(str(channel.id))
+        if not row or row.get("request_type") != "embassy":
+            await interaction.followup.send(
+                "Could not find the matching verification data anymore. Use "
+                "`/embassyapprove` or `/deny` manually.",
+                ephemeral=True,
+            )
+            return
+
+        # The requester themselves must never be able to approve/deny their
+        # own embassy request, even if they happen to also hold one of the
+        # roles below.
+        if str(interaction.user.id) == str(row["discord_user_id"]):
+            await interaction.followup.send(
+                "You cannot approve or deny your own request.", ephemeral=True
+            )
+            return
+
         if approve:
             mod_roles = [
                 self.config["roles"]["government"],
+                self.config["roles"]["minister_foreign_affairs"],
                 self.config["roles"]["president"],
                 self.config["roles"]["vice_president"],
             ]
@@ -1841,16 +1858,6 @@ class Welcome(commands.Cog, name="welcome"):
         if not has_permission and not interaction.user.guild_permissions.administrator:
             await interaction.followup.send(
                 "You don't have permission to use this.", ephemeral=True
-            )
-            return
-
-        db = await self._get_approval_db()
-        row = await db.get_pending_verification_code(str(channel.id))
-        if not row or row.get("request_type") != "embassy":
-            await interaction.followup.send(
-                "Could not find the matching verification data anymore. Use "
-                "`/embassyapprove` or `/deny` manually.",
-                ephemeral=True,
             )
             return
 
