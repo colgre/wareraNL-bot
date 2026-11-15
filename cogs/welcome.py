@@ -297,6 +297,11 @@ class VerificationQuestionnaireModal(discord.ui.Modal):
         is_english = self.request_type in {"belgian", "foreigner", "embassy"}
 
         raw_profile_value = str(self.profile_link).strip().strip("<>")
+        try:
+            Welcome.normalize_ingame_id(raw_profile_value)
+        except ValueError as e:
+            await interaction.response.send_message(f"⚠️ {e}", ephemeral=True)
+            return
 
         questionnaire_answers: dict[str, str] = {}
         canonical_country: str | None = None
@@ -2001,6 +2006,13 @@ class Welcome(commands.Cog, name="welcome"):
             return 1
         return 2
 
+    # WarEra user/company/etc IDs are MongoDB ObjectIds: 24 lowercase hex
+    # characters. Some profile URLs instead carry the player's username
+    # (e.g. .../user/Witkap_Pater), which looks plausible but silently fails
+    # every downstream API call — enforcing the real format here catches
+    # that at ticket-creation time instead of as a confusing later error.
+    _OBJECT_ID_RE = re.compile(r"^[0-9a-fA-F]{24}$")
+
     @staticmethod
     def normalize_ingame_id(in_game_id: str) -> str:
         """Normalize and validate in-game ID or WarEra profile URL input."""
@@ -2026,9 +2038,14 @@ class Welcome(commands.Cog, name="welcome"):
 
         if not normalized:
             raise ValueError("Could not extract an in-game ID from the provided input.")
-        if len(normalized) > 64:
-            raise ValueError("In-game ID is too long (max 64 characters).")
-        return normalized
+        if not Welcome._OBJECT_ID_RE.match(normalized):
+            raise ValueError(
+                "This doesn't look like a valid WarEra user ID. Open your profile on "
+                "WarEra, copy the link from the address bar and make sure it ends in a "
+                "24-character ID (e.g. `https://app.warera.io/user/69820c895312557c1f363ab7`), "
+                "not your username."
+            )
+        return normalized.lower()
 
     @staticmethod
     def _embassy_channel_candidates(country: str) -> set[str]:
