@@ -58,6 +58,15 @@ class CitizenTasks(TaskCogBase, name="citizen_tasks"):
         if nl_country_id:
             await self._do_nl_refresh(nl_country_id)
 
+        # ── Nickname sync for every identity-linked member, not just NL ──
+        # Doesn't touch citizen_levels (only reads identity_links + live API),
+        # so unlike the all-countries sweep below it's safe to always run —
+        # no DB-lock contention with the data-fetcher container.
+        try:
+            await self._sync_discord_nicknames_for_all_linked()
+        except Exception:
+            logger.exception("citizen_refresh: all-linked nickname sync failed")
+
         # ── All-countries sweep (guarded by 6-hour cooldown) ──────────
         now_utc = datetime.now(timezone.utc)
         run_full_sweep = True
@@ -442,6 +451,102 @@ class CitizenTasks(TaskCogBase, name="citizen_tasks"):
 
         return stats
 
+    async def _sync_discord_nicknames_for_all_linked(self) -> dict[str, int]:
+        """Sync Discord nicknames to the latest WarEra username for every
+        identity-linked member, regardless of country.
+
+        Unlike ``_sync_discord_nicknames_for_country``, this doesn't read
+        from the citizen_levels cache (which is only populated per-country,
+        and for every country but NL that only happens when
+        ``enable_all_countries_sweep`` is set — it isn't on any deployment).
+        Instead it looks up each linked member's current username directly
+        via the API, so embassy/foreigner/belgian members — whose home
+        country is never in that cache — get synced too.
+        """
+        stats = {
+            "links_checked": 0, "resolved": 0, "updated": 0, "skipped": 0, "failed": 0,
+        }
+        if not self._client or not self._db:
+            return stats
+
+        for guild in self.bot.guilds:
+            try:
+                links = await self._db.get_identity_links_for_guild(str(guild.id))
+            except Exception:
+                logger.exception(
+                    "nickname_sync: failed loading identity links for guild %s", guild.id
+                )
+                continue
+            stats["links_checked"] += len(links)
+            if not links:
+                continue
+
+            unique_ids = sorted({
+                str(link.get("in_game_user_id") or "").strip()
+                for link in links
+                if str(link.get("in_game_user_id") or "").strip()
+            })
+            if not unique_ids:
+                continue
+
+            try:
+                results = await self._client.batch_get(
+                    "/user.getUserLite", [{"userId": uid} for uid in unique_ids]
+                )
+            except Exception:
+                logger.exception(
+                    "nickname_sync: batch getUserLite failed for guild %s", guild.id
+                )
+                continue
+
+            name_by_ingame = {
+                uid: str(data["username"]).strip()
+                for uid, data in zip(unique_ids, results)
+                if isinstance(data, dict) and data.get("username")
+            }
+
+            for link in links:
+                in_game_user_id = str(link.get("in_game_user_id") or "").strip()
+                target_nick = name_by_ingame.get(in_game_user_id)
+                if not target_nick:
+                    continue
+                stats["resolved"] += 1
+
+                discord_user_id = str(link.get("discord_user_id") or "").strip()
+                if not discord_user_id.isdigit():
+                    continue
+
+                member = guild.get_member(int(discord_user_id))
+                if member is None or member.bot:
+                    continue
+
+                target_nick = target_nick[:32]
+                # Preserve any [Dx] division prefix applied by war_guild_divisions
+                if member.nick and (m := re.match(r"^\[D\d\] ", member.nick)):
+                    target_nick = (m.group(0) + target_nick)[:32]
+
+                current = member.nick or member.name
+                if current == target_nick:
+                    stats["skipped"] += 1
+                    continue
+
+                try:
+                    await member.edit(
+                        nick=target_nick,
+                        reason="Sync met WarEra-naam (alle gelinkte leden)",
+                    )
+                    stats["updated"] += 1
+                except Exception:
+                    stats["failed"] += 1
+
+        logger.info(
+            "nickname_sync: all-linked finished (links_checked=%d resolved=%d "
+            "updated=%d skipped=%d failed=%d)",
+            stats["links_checked"], stats["resolved"], stats["updated"],
+            stats["skipped"], stats["failed"],
+        )
+        return stats
+
     async def _sync_discord_nicknames_for_country(
         self,
         country_id: str,
@@ -583,16 +688,34 @@ class CitizenTasks(TaskCogBase, name="citizen_tasks"):
             logger.exception("syncnicknames: nickname sync failed")
             await interaction.followup.send(f"❌ Fout: {exc}", ephemeral=True)
             return
-        await interaction.followup.send(
+
+        try:
+            all_stats = await self._sync_discord_nicknames_for_all_linked()
+        except Exception:
+            logger.exception("syncnicknames: all-linked nickname sync failed")
+            all_stats = None
+
+        message = (
             "✅ Bijnamen-sync klaar.\n"
             f"NL burgers in cache: **{stats['citizens']}**\n"
             f"Identity-links gecontroleerd: **{stats['links_checked']}**\n"
             f"Gematcht (link + bekende WarEra-naam): **{stats['matched']}**\n"
             f"Bijgewerkt: **{stats['updated']}**  •  "
             f"Al correct: **{stats['skipped']}**  •  "
-            f"Mislukt: **{stats['failed']}**",
-            ephemeral=True,
+            f"Mislukt: **{stats['failed']}**\n"
         )
+        if all_stats is not None:
+            message += (
+                "\n**Alle gelinkte leden (elk land, incl. ambassades):**\n"
+                f"Identity-links gecontroleerd: **{all_stats['links_checked']}**\n"
+                f"Opgelost via WarEra-naam: **{all_stats['resolved']}**\n"
+                f"Bijgewerkt: **{all_stats['updated']}**  •  "
+                f"Al correct: **{all_stats['skipped']}**  •  "
+                f"Mislukt: **{all_stats['failed']}**"
+            )
+        else:
+            message += "\n⚠️ Sync voor alle gelinkte leden is mislukt (zie logs)."
+        await interaction.followup.send(message, ephemeral=True)
 
     # ------------------------------------------------------------------ #
     # Level-5 hourly threshold detection                                   #
