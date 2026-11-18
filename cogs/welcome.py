@@ -1801,14 +1801,13 @@ class Welcome(commands.Cog, name="welcome"):
             ),
             color=discord.Color.blurple(),
         )
-        # Ping the Dutch Minister of Foreign Affairs so they see this needs a
-        # decision — they're also allowed to press the buttons themselves
-        # (see handle_embassy_decision_click), not just government/president/
-        # vice-president.
-        mofa_role_id = self.config.get("roles", {}).get("minister_foreign_affairs")
-        mofa_role = guild.get_role(mofa_role_id) if mofa_role_id else None
+        # Ping the minister role so they see this needs a decision — they're
+        # also allowed to press the buttons themselves (see
+        # handle_embassy_decision_click), not just president/vice-president/MoFA.
+        minister_role_id = self.config.get("roles", {}).get("government")
+        minister_role = guild.get_role(minister_role_id) if minister_role_id else None
         await channel.send(
-            content=mofa_role.mention if mofa_role else None,
+            content=minister_role.mention if minister_role else None,
             embed=verified_embed,
             view=EmbassyDecisionView(),
         )
