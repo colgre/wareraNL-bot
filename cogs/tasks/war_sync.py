@@ -374,14 +374,14 @@ class WarSyncCog(TaskCogBase, name="war_sync"):
             except (discord.Forbidden, discord.HTTPException) as exc:
                 logger.debug("war_sync: cannot set nickname for %s: %s", member.name, exc)
 
-        # Assign division role + [DN] prefix
+        # Assign Paramilitary/State Army (+ Commander) role
         if in_game_id:
             divisions_cog = self.bot.cogs.get("WarGuildDivisionsCog")
             if divisions_cog:
                 try:
-                    await divisions_cog.sync_member_division(member, in_game_id)
+                    await divisions_cog.sync_member_army_type(member, in_game_id)
                 except Exception as exc:
-                    logger.warning("war_sync: division sync failed for %s: %s", member.name, exc)
+                    logger.warning("war_sync: army-type sync failed for %s: %s", member.name, exc)
 
         # Assign MU roles — use DB path so it works regardless of in-memory cache state
         if in_game_id:
@@ -455,14 +455,14 @@ class WarSyncCog(TaskCogBase, name="war_sync"):
                     )
 
         if in_game_id:
-            # Assign division role + [DN] prefix
+            # Assign Paramilitary/State Army (+ Commander) role
             divisions_cog = self.bot.cogs.get("WarGuildDivisionsCog")
             if divisions_cog:
                 try:
-                    await divisions_cog.sync_member_division(member, in_game_id)
+                    await divisions_cog.sync_member_army_type(member, in_game_id)
                 except Exception as exc:
                     logger.warning(
-                        "war_sync: division sync on join failed for %s: %s",
+                        "war_sync: army-type sync on join failed for %s: %s",
                         member.name, exc,
                     )
             await self._assign_mu_roles_from_db(member, in_game_id)
