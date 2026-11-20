@@ -61,6 +61,11 @@ def _colour(scheme: str | None) -> discord.Colour:
     return discord.Colour(_COLOUR_MAP.get(raw, _COLOUR_MAP["default"]))
 
 
+def _norm_mu_name(name: str) -> str:
+    """Normalise a MU name for fuzzy comparison (strips spaces, dots, dashes)."""
+    return re.sub(r"[\s.\-_]+", "", name).lower()
+
+
 # ── Persistent verify button ──────────────────────────────────────────────────
 
 class VerifyView(discord.ui.View):
@@ -854,6 +859,7 @@ class WarSyncCog(TaskCogBase, name="war_sync"):
                     "mu_id": mu_info["mu_id"],
                     "mu_name": mu_name,
                     "owner_id": owner_id,
+                    "country": detail.get("country"),
                     "commanders": list({
                         *((detail.get("roles") or {}).get("commanders", [])),
                     }),
@@ -878,6 +884,7 @@ class WarSyncCog(TaskCogBase, name="war_sync"):
             role_ids = await self._ensure_mu_roles(war_guild, mu["mu_id"], mu["mu_name"], mu_colour)
             if role_ids:
                 new_mu_discord_role_ids[mu["mu_id"]] = role_ids
+            await self._ensure_mu_category(war_guild, mu["mu_id"], mu["mu_name"], mu.get("country"))
 
             # Map every member to their role type for this MU
             owner_set = {mu["owner_id"]}
@@ -1229,6 +1236,85 @@ class WarSyncCog(TaskCogBase, name="war_sync"):
                 logger.warning("war_sync: failed to create role '%s': %s", role_name, exc)
 
         return result
+
+    async def _ensure_mu_category(
+        self, war_guild: discord.Guild, mu_id: str, mu_name: str, mu_country: str | None
+    ) -> None:
+        """Create a Discord category for *mu_id* if it doesn't have one yet.
+
+        Runs automatically for every MU whose own country is NL on each
+        scan, so a brand-new Dutch MU gets its own category without anyone
+        having to do it by hand (previously only possible via the
+        now-removed /mudivisie command — confirmed as a real gap: Korps
+        Comeback's category had to be created manually). Deliberately
+        scoped to the MU's actual country rather than the broader
+        "is_dutch" check used for role-granting (which also matches a
+        foreign-owned MU with a single Dutch member) — confirmed live that
+        the broader check sweeps in unrelated foreign MUs, which would
+        clutter the server with categories for MUs that aren't actually
+        Dutch. Only creates/links the category here; its Commander/Member
+        permission overwrites are applied afterwards by
+        WarGuildDivisionsCog's hourly category-permission repair pass, once
+        this category is linked in war_mu_roles.
+        """
+        if not self._db or mu_country != self._nl_country_id:
+            return
+        try:
+            existing_cat_id = await self._get_war_mu_role(mu_id, "category", str(war_guild.id))
+        except Exception as exc:
+            logger.warning("war_sync: category lookup failed for %s: %s", mu_name, exc)
+            return
+        if existing_cat_id and war_guild.get_channel(existing_cat_id):
+            return  # already has a linked, still-existing category
+
+        try:
+            all_category_rows = await self._db.get_all_war_mu_roles(str(war_guild.id))
+            claimed_cat_ids = {
+                row["discord_role_id"]
+                for row in all_category_rows
+                if row["role_type"] == "category" and row["mu_id"] != mu_id
+            }
+        except Exception as exc:
+            logger.warning(
+                "war_sync: claimed-category lookup failed for %s: %s", mu_name, exc
+            )
+            claimed_cat_ids = set()
+
+        # Bootstrap: an existing category might already represent this MU
+        # (e.g. created by hand before this existed) but not yet be linked
+        # by ID — match on its current bare name before creating a new one.
+        # Never steal a category another mu_id already claims: two distinct
+        # MUs can share a display name (confirmed live: two unrelated
+        # "Ghost Regiment" MUs), which would otherwise merge their category
+        # access.
+        norm_target = _norm_mu_name(mu_name)
+        for cat in war_guild.categories:
+            if cat.id in claimed_cat_ids:
+                continue
+            if _norm_mu_name(cat.name) == norm_target:
+                await self._upsert_war_mu_role(
+                    mu_id, "category", str(war_guild.id), cat.id, mu_name
+                )
+                logger.info(
+                    "war_sync: linked existing category %r to MU %r (one-time bootstrap)",
+                    cat.name, mu_name,
+                )
+                return
+
+        try:
+            new_cat = await war_guild.create_category(
+                mu_name,
+                overwrites={war_guild.default_role: discord.PermissionOverwrite(view_channel=False)},
+                reason=f"war_sync: nieuwe MU-categorie voor '{mu_name}'",
+            )
+            await self._upsert_war_mu_role(
+                mu_id, "category", str(war_guild.id), new_cat.id, mu_name
+            )
+            logger.info("war_sync: created category %r for MU %r", mu_name, mu_name)
+        except discord.Forbidden:
+            logger.warning("war_sync: no permission to create category for %r", mu_name)
+        except Exception as exc:
+            logger.warning("war_sync: category creation failed for %s: %s", mu_name, exc)
 
     async def _cleanup_removed_mus(
         self, war_guild: discord.Guild, active_mu_ids: set[str]
