@@ -181,6 +181,12 @@ _ARMY_CHANNEL_NAMES: dict[str, str] = {
     "state_army_commander":   "state-army-commander",
 }
 
+# poll_state keys used to persist the Army category/channel IDs — looked up
+# by ID rather than name so a manual rename doesn't cause a duplicate to be
+# created on the next sync (see _ensure_army_channels).
+_ARMY_CATEGORY_POLL_KEY = "war_army_category_id"
+_ARMY_CHANNEL_POLL_KEY_PREFIX = "war_army_channel_"
+
 # Legacy Discord role names to delete now that the division system is retired
 _LEGACY_DIVISION_ROLE_NAMES: set[str] = {f"Divisie {n}" for n in range(1, 6)} | {
     f"D{n} Leiderschap" for n in range(1, 6)
@@ -607,8 +613,29 @@ class WarGuildDivisionsCog(TaskCogBase):
     # ── Army-type channels ────────────────────────────────────────────────────
 
     async def _ensure_army_channels(self, guild: discord.Guild) -> None:
-        """Create the Army category + one channel per army-type role, if missing."""
-        category = discord.utils.get(guild.categories, name=_ARMY_CATEGORY_NAME)
+        """Create the Army category + one channel per army-type role, if missing.
+
+        Looked up by a persisted ID (poll_state), not by name — someone
+        renaming #paramilitary (e.g. adding an emoji prefix) must not make
+        this think the channel is missing and create a duplicate. Confirmed
+        as a real incident: renaming the 4 auto-created channels resulted
+        in 4 fresh duplicates with the original plain names on the next sync.
+        """
+        if not self._db:
+            return
+
+        category_id = None
+        try:
+            stored = await self._db.get_poll_state(_ARMY_CATEGORY_POLL_KEY)
+            category_id = int(stored) if stored else None
+        except Exception:
+            category_id = None
+        category = guild.get_channel(category_id) if category_id else None
+        if not isinstance(category, discord.CategoryChannel):
+            # Bootstrap: a category with the default name might already exist
+            # (first run, or the ID was never persisted) — use it once, then
+            # persist its ID so a later rename doesn't orphan the link.
+            category = discord.utils.get(guild.categories, name=_ARMY_CATEGORY_NAME)
         if category is None:
             try:
                 category = await guild.create_category(
@@ -627,11 +654,35 @@ class WarGuildDivisionsCog(TaskCogBase):
                     _ARMY_CATEGORY_NAME,
                 )
                 return
+        try:
+            await self._db.set_poll_state(_ARMY_CATEGORY_POLL_KEY, str(category.id))
+        except Exception as exc:
+            logger.warning("war_guild_divisions: failed to persist army category id: %s", exc)
 
-        existing_channels = {c.name for c in category.text_channels}
         for key, channel_name in _ARMY_CHANNEL_NAMES.items():
-            if channel_name in existing_channels:
+            poll_key = _ARMY_CHANNEL_POLL_KEY_PREFIX + key
+            channel_id = None
+            try:
+                stored = await self._db.get_poll_state(poll_key)
+                channel_id = int(stored) if stored else None
+            except Exception:
+                channel_id = None
+            if channel_id and guild.get_channel(channel_id):
+                continue  # already has a linked, still-existing channel
+
+            # Bootstrap: a channel with the default name might already exist
+            # in this category but not yet be linked — use it once.
+            existing = discord.utils.get(category.text_channels, name=channel_name)
+            if existing is not None:
+                try:
+                    await self._db.set_poll_state(poll_key, str(existing.id))
+                except Exception as exc:
+                    logger.warning(
+                        "war_guild_divisions: failed to persist army channel id for %s: %s",
+                        key, exc,
+                    )
                 continue
+
             role_id = self._army_role_ids.get(key)
             role = guild.get_role(role_id) if role_id else None
             overwrites = {
@@ -642,12 +693,13 @@ class WarGuildDivisionsCog(TaskCogBase):
                     view_channel=True, send_messages=True, read_message_history=True
                 )
             try:
-                await guild.create_text_channel(
+                new_channel = await guild.create_text_channel(
                     channel_name,
                     category=category,
                     overwrites=overwrites,
                     reason="war_guild_divisions: army-type channel",
                 )
+                await self._db.set_poll_state(poll_key, str(new_channel.id))
                 logger.info("war_guild_divisions: created channel #%s", channel_name)
             except discord.Forbidden:
                 logger.warning(
